@@ -19,7 +19,6 @@ export default {
     upcoming_matches: 'Upcoming Fixures',
     quick_predict: 'Quick Predict',
     view_all: 'View All Matches',
-    community_buzz: 'Community Buzz',
     days: 'd',
     hrs: 'h',
     mins: 'm',

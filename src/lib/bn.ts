@@ -19,7 +19,6 @@ export default {
     upcoming_matches: 'আসন্ন ম্যাচ',
     quick_predict: 'কুইক প্রেডিক্ট',
     view_all: 'সব ম্যাচ দেখুন',
-    community_buzz: 'কমিউনিটি বাজ',
     days: 'দিন',
     hrs: 'ঘন্টা',
     mins: 'মিনিট',

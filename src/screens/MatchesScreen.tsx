@@ -1,7 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GroupInfo, GroupStanding, MatchData, TeamInfo } from '../types';
 import { format } from 'date-fns';
-import { Bot, ChevronLeft, MapPin, RefreshCw, Globe, Share2, Search, Star, AlertCircle } from 'lucide-react';
+import { Bot, ChevronLeft, MapPin, RefreshCw, Globe, Share2, Search, Star, AlertCircle, Shield, Save } from 'lucide-react';
+import { auth } from '../firebase';
+import { useAuth } from '../hooks/useAuth';
+import { useMatchDocument } from '../hooks/useMatchDocument';
+import { useUserPrediction } from '../hooks/useUserPrediction';
+import { updateMatchResultInFirestore } from '../lib/matchResultFirestore';
+import { submitPrediction } from '../lib/predictionsApi';
+import { choiceLabel, canSubmitPrediction } from '../lib/predictionUtils';
+import type { PredictionChoice } from '../lib/predictionTypes';
 import { MatchTeamsDisplay, TeamFlag } from '../components/MatchTeamsDisplay';
 import {
   applyMatchStatus,
@@ -13,6 +21,7 @@ import {
   isMatchToday,
   withComputedMatchStatuses,
 } from '../lib/matchUtils';
+import { useWorldCupData } from '../hooks/useWorldCupData';
 
 function resolveTeam(
   teams: TeamInfo[],
@@ -83,73 +92,22 @@ function matchesSearchFilter(match: MatchData, teams: TeamInfo[], query: string)
 export function MatchesScreen({
   initialMatchId = null,
   onInitialMatchHandled,
+  onNavigateToProfile,
 }: {
   initialMatchId?: string | null;
   onInitialMatchHandled?: () => void;
+  onNavigateToProfile?: () => void;
 } = {}) {
   const [activeTab, setActiveTab] = useState<'fixtures' | 'groups' | 'points' | 'favorites'>('fixtures');
   const [selectedMatch, setSelectedMatch] = useState<MatchData | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const [matches, setMatches] = useState<MatchData[]>([]);
-  const [teams, setTeams] = useState<TeamInfo[]>([]);
-  const [groups, setGroups] = useState<GroupInfo[]>([]);
-  const [standings, setStandings] = useState<GroupStanding[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const { matches, teams, groups, standings, isLoading, loadError } = useWorldCupData();
 
   const [favoriteTeams, setFavoriteTeams] = useState<string[]>(() => {
     const saved = localStorage.getItem('autoconFavoriteTeams');
     return saved ? JSON.parse(saved) : [];
   });
-
-  const loadData = useCallback(async () => {
-    setIsLoading(true);
-    setLoadError(null);
-    try {
-      const [matchesRes, teamsRes, groupsRes, standingsRes] = await Promise.all([
-        fetch('/api/matches'),
-        fetch('/api/teams'),
-        fetch('/api/groups'),
-        fetch('/api/standings'),
-      ]);
-
-      const errors: string[] = [];
-      const parse = async (res: Response, label: string) => {
-        const data = await res.json();
-        if (!res.ok) {
-          errors.push(data.error || `Failed to load ${label}`);
-          return null;
-        }
-        return data;
-      };
-
-      const [mData, tData, gData, sData] = await Promise.all([
-        parse(matchesRes, 'matches'),
-        parse(teamsRes, 'teams'),
-        parse(groupsRes, 'groups'),
-        parse(standingsRes, 'standings'),
-      ]);
-
-      if (errors.length) {
-        setLoadError(errors.join(' '));
-      }
-
-      if (Array.isArray(mData)) setMatches(mData);
-      if (Array.isArray(tData)) setTeams(tData);
-      if (Array.isArray(gData)) setGroups(gData);
-      if (Array.isArray(sData)) setStandings(sData);
-    } catch (e) {
-      console.error(e);
-      setLoadError('Network error. Could not load match data.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
 
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -279,11 +237,14 @@ export function MatchesScreen({
     localStorage.setItem('autoconFavoriteTeams', JSON.stringify(updated));
   };
 
+  useEffect(() => {
+    if (!selectedMatch) return;
+    const updated = matches.find((m) => m.id === selectedMatch.id);
+    if (updated) setSelectedMatch(updated);
+  }, [matches, selectedMatch?.id]);
+
   const handleMatchUpdate = (updated: MatchData) => {
-    const withStatus = applyMatchStatus(updated);
-    setMatches((prev) => prev.map((m) => (m.id === withStatus.id ? withStatus : m)));
-    setSelectedMatch(withStatus);
-    loadData();
+    setSelectedMatch(updated);
   };
 
   if (selectedMatch) {
@@ -480,7 +441,10 @@ export function MatchesScreen({
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <div>
               <p>{loadError}</p>
-              <button onClick={loadData} className="text-indigo-600 font-medium text-xs mt-1 hover:underline">
+              <button
+                onClick={() => window.location.reload()}
+                className="text-indigo-600 font-medium text-xs mt-1 hover:underline"
+              >
                 Try again
               </button>
             </div>
@@ -572,12 +536,13 @@ export function MatchesScreen({
 // Match Details Component Inside Same File
 // ---------------------------------------------
 function MatchDetails({
-  match,
+  match: initialMatch,
   teams,
   favoriteTeams,
   onToggleFavoriteTeam,
   onMatchUpdate,
   onBack,
+  onNavigateToProfile,
 }: {
   match: MatchData;
   teams: TeamInfo[];
@@ -585,33 +550,105 @@ function MatchDetails({
   onToggleFavoriteTeam: (e: React.MouseEvent, teamId: string) => void;
   onMatchUpdate: (match: MatchData) => void;
   onBack: () => void;
+  onNavigateToProfile?: () => void;
 }) {
+  const { user, isAdmin, isAuthReady } = useAuth();
+  const [predictionRefreshKey, setPredictionRefreshKey] = useState(0);
+  const { prediction: savedPrediction, isLoading: predictionLoading } = useUserPrediction(
+    initialMatch.id,
+    user?.uid ?? null,
+    predictionRefreshKey
+  );
+  const { match: firestoreMatch, isLoading: matchLoading, error: matchLoadError } = useMatchDocument(
+    initialMatch.id,
+    teams
+  );
+
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const interval = setInterval(() => setTick((n) => n + 1), 30000);
     return () => clearInterval(interval);
   }, []);
 
-  const liveMatch = useMemo(() => applyMatchStatus(match), [match, tick]);
+  const liveMatch = useMemo(() => {
+    const base = firestoreMatch ?? initialMatch;
+    return applyMatchStatus(base);
+  }, [firestoreMatch, initialMatch, tick]);
+
   const teamA = resolveTeam(teams, liveMatch.teamA, liveMatch.teamAName);
   const teamB = resolveTeam(teams, liveMatch.teamB, liveMatch.teamBName);
 
-  const [prediction, setPrediction] = useState<string | null>(null);
+  const [pendingChoice, setPendingChoice] = useState<PredictionChoice | null>(null);
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+  const [predictionSaving, setPredictionSaving] = useState(false);
+  const [predictionError, setPredictionError] = useState<string | null>(null);
+  const [predictionSuccess, setPredictionSuccess] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [resultLoading, setResultLoading] = useState(false);
   const [resultError, setResultError] = useState<string | null>(null);
+  const [adminScore1, setAdminScore1] = useState('');
+  const [adminScore2, setAdminScore2] = useState('');
+  const [adminSaving, setAdminSaving] = useState(false);
+  const [adminSaveError, setAdminSaveError] = useState<string | null>(null);
+  const [adminSaveSuccess, setAdminSaveSuccess] = useState(false);
+
+  useEffect(() => {
+    setAdminScore1(liveMatch.scoreA !== null ? String(liveMatch.scoreA) : '');
+    setAdminScore2(liveMatch.scoreB !== null ? String(liveMatch.scoreB) : '');
+  }, [liveMatch.scoreA, liveMatch.scoreB, liveMatch.id]);
   const [aiContent, setAiContent] = useState<string | null>(null);
   const [aiSource, setAiSource] = useState<'gemini' | 'mock' | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
 
+  const saveAdminResult = async () => {
+    const score1 = Number(adminScore1);
+    const score2 = Number(adminScore2);
+    if (!Number.isInteger(score1) || score1 < 0 || !Number.isInteger(score2) || score2 < 0) {
+      setAdminSaveError('Enter valid non-negative whole numbers for both scores.');
+      return;
+    }
+
+    setAdminSaving(true);
+    setAdminSaveError(null);
+    setAdminSaveSuccess(false);
+    try {
+      await updateMatchResultInFirestore(
+        liveMatch.id,
+        teamA.name,
+        teamB.name,
+        score1,
+        score2
+      );
+      setAdminSaveSuccess(true);
+    } catch (e) {
+      console.error(e);
+      setAdminSaveError(
+        e instanceof Error ? e.message : 'Failed to save match result. Check admin sign-in and Firestore rules.'
+      );
+    } finally {
+      setAdminSaving(false);
+    }
+  };
+
   const fetchMatchResult = async () => {
+    if (!isAdmin) return;
+
     setResultLoading(true);
     setResultError(null);
     try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) {
+        setResultError('Sign in with the admin Google account to fetch results.');
+        return;
+      }
+
       const res = await fetch('/api/gemini/match-result', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matchId: match.id }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ matchId: liveMatch.id }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -636,7 +673,7 @@ function MatchDetails({
       const res = await fetch('/api/gemini/analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matchId: match.id, type })
+        body: JSON.stringify({ matchId: liveMatch.id, type })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -660,22 +697,49 @@ function MatchDetails({
     }
   };
 
-  const submitPrediction = async (choice: string) => {
-    setPrediction(choice);
-    await fetch('/api/predict', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: 'AUTOCON-1001', matchId: match.id, choice }) // mock userId
-    });
-    alert('Prediction submitted successfully! (প্রেডিকশন সফলভাবে জমা হয়েছে)');
+  const canPredict = canSubmitPrediction(liveMatch);
+  const activeChoice = savedPrediction?.choice ?? null;
+
+  const handleSelectPrediction = (choice: PredictionChoice) => {
+    if (!user) {
+      setShowLoginPrompt(true);
+      return;
+    }
+    if (!canPredict || savedPrediction?.processed) return;
+    setPendingChoice(choice);
+    setPredictionError(null);
+    setPredictionSuccess(false);
+  };
+
+  const confirmPrediction = async () => {
+    if (!user || !pendingChoice) return;
+
+    setPredictionSaving(true);
+    setPredictionError(null);
+    try {
+      await submitPrediction(liveMatch.id, pendingChoice);
+      setPendingChoice(null);
+      setPredictionSuccess(true);
+      setPredictionRefreshKey((key) => key + 1);
+    } catch (e) {
+      console.error(e);
+      const message = e instanceof Error ? e.message : 'Failed to save prediction.';
+      setPredictionError(
+        message.includes('permission')
+          ? 'Could not save prediction. Ensure the server has Firestore Admin access (serviceAccountKey.json).'
+          : message
+      );
+    } finally {
+      setPredictionSaving(false);
+    }
   };
 
   const handleShareMatch = async () => {
     let text = `Check out the match: ${teamA?.name} vs ${teamB?.name} at the Sports SUST Prediction Challenge 26!`;
     if (liveMatch.status === 'completed') {
         text = `Match Finished: ${teamA?.name} ${liveMatch.scoreA} - ${liveMatch.scoreB} ${teamB?.name}. Check the AI Analysis on Sports SUST Prediction Challenge 26!`;
-    } else if (prediction) {
-        const choiceName = prediction === 'draw' ? 'a Draw' : prediction === 'teamA' ? teamA?.name : teamB?.name;
+    } else if (activeChoice) {
+        const choiceName = choiceLabel(activeChoice, teamA.name, teamB.name);
         text = `I predicted ${choiceName} for the ${teamA?.name} vs ${teamB?.name} match! Join me in the Prediction Challenge 26!`;
     }
     
@@ -710,6 +774,16 @@ function MatchDetails({
       </div>
 
       <div className="p-4 space-y-6">
+        {matchLoading && (
+          <p className="text-sm text-gray-500 text-center animate-pulse">Loading match from Firestore...</p>
+        )}
+        {matchLoadError && (
+          <div className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+            <p>{matchLoadError}</p>
+          </div>
+        )}
+
         {/* Scorecard */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           <MatchTeamsDisplay
@@ -728,49 +802,159 @@ function MatchDetails({
               </button>
             }
           />
-          {match.venue && (
-            <p className="text-xs text-gray-500 text-center mt-4">{match.venue}</p>
+          {liveMatch.venue && (
+            <p className="text-xs text-gray-500 text-center mt-4">{liveMatch.venue}</p>
           )}
-          {liveMatch.status !== 'completed' && (
-            <button
-              onClick={fetchMatchResult}
-              disabled={resultLoading}
-              className="mt-4 w-full bg-emerald-50 text-emerald-700 font-semibold py-2.5 rounded-xl hover:bg-emerald-100 text-sm"
-            >
-              {resultLoading ? 'Fetching result from Gemini...' : 'Fetch Result via Gemini'}
-            </button>
-          )}
-          {resultError && (
-            <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-              {resultError}
-            </p>
+
+          {isAuthReady && isAdmin && (
+            <div className="mt-5 pt-5 border-t border-gray-100">
+              <div className="flex items-center gap-2 mb-3">
+                <Shield className="w-4 h-4 text-indigo-600" />
+                <h4 className="text-sm font-bold text-gray-900">Admin — Update Result</h4>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <label className="text-xs font-medium text-gray-600">
+                  {teamA.name} score
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={adminScore1}
+                    onChange={(e) => setAdminScore1(e.target.value)}
+                    className="mt-1 block w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="text-xs font-medium text-gray-600">
+                  {teamB.name} score
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={adminScore2}
+                    onChange={(e) => setAdminScore2(e.target.value)}
+                    className="mt-1 block w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  />
+                </label>
+              </div>
+              <button
+                type="button"
+                onClick={saveAdminResult}
+                disabled={adminSaving}
+                className="w-full bg-indigo-600 text-white font-semibold py-2.5 rounded-xl hover:bg-indigo-700 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                {adminSaving ? 'Saving to Firestore...' : 'Save Result'}
+              </button>
+              {adminSaveSuccess && (
+                <p className="mt-2 text-xs text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
+                  Result saved. All users will see the update in real time.
+                </p>
+              )}
+              {adminSaveError && (
+                <p className="mt-2 text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                  {adminSaveError}
+                </p>
+              )}
+              {liveMatch.status !== 'completed' && (
+                <button
+                  type="button"
+                  onClick={fetchMatchResult}
+                  disabled={resultLoading}
+                  className="mt-3 w-full bg-emerald-50 text-emerald-700 font-semibold py-2.5 rounded-xl hover:bg-emerald-100 text-sm"
+                >
+                  {resultLoading ? 'Fetching result from Gemini...' : 'Fetch Result via Gemini'}
+                </button>
+              )}
+              {resultError && (
+                <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                  {resultError}
+                </p>
+              )}
+            </div>
           )}
         </div>
 
-        {/* Prediction Builder - only before kickoff */}
-        {liveMatch.status === 'upcoming' && (
+        {/* Prediction Builder */}
+        {(canPredict || savedPrediction) && (
           <div className="bg-white rounded-2xl p-5 border border-indigo-100 shadow-lg shadow-indigo-100/50">
              <h3 className="font-bold text-gray-900 mb-1">Make your Prediction</h3>
-             <p className="text-xs text-gray-500 mb-4 font-medium">সঠিক উত্তরের জন্য +১০ পয়েন্ট, ভুলের জন্য -৫ (Submit early!)</p>
-             
-             <div className="grid grid-cols-3 gap-2">
-               <PredictOption 
-                 label={teamA?.name!} 
-                 active={prediction === 'teamA'} 
-                 onClick={() => submitPrediction('teamA')}
-               />
-               <PredictOption 
-                 label="Draw" 
-                 active={prediction === 'draw'} 
-                 onClick={() => submitPrediction('draw')}
-               />
-               <PredictOption 
-                 label={teamB?.name!} 
-                 active={prediction === 'teamB'} 
-                 onClick={() => submitPrediction('teamB')}
-               />
-             </div>
+             <p className="text-xs text-gray-500 mb-4 font-medium">
+               সঠিক উত্তরের জন্য +১০ পয়েন্ট, ভুলের জন্য -৫ (Submit early!)
+             </p>
+
+             {predictionLoading ? (
+               <p className="text-sm text-gray-500 text-center py-4 animate-pulse">Loading your prediction...</p>
+             ) : (
+               <>
+                 {savedPrediction && (
+                   <div className="mb-4 text-xs rounded-xl px-3 py-2 bg-indigo-50 border border-indigo-100 text-indigo-900">
+                     Your pick: <span className="font-bold">{choiceLabel(savedPrediction.choice, teamA.name, teamB.name)}</span>
+                     {savedPrediction.processed && savedPrediction.pointsAwarded !== null && (
+                       <span className={`ml-2 font-bold ${savedPrediction.pointsAwarded > 0 ? 'text-green-700' : 'text-red-600'}`}>
+                         ({savedPrediction.pointsAwarded > 0 ? '+' : ''}{savedPrediction.pointsAwarded} pts)
+                       </span>
+                     )}
+                   </div>
+                 )}
+
+                 {canPredict && !savedPrediction?.processed && (
+                   <div className="grid grid-cols-3 gap-2">
+                     <PredictOption
+                       label={teamA.name}
+                       active={activeChoice === 'team1' || pendingChoice === 'team1'}
+                       onClick={() => handleSelectPrediction('team1')}
+                     />
+                     <PredictOption
+                       label="Draw"
+                       active={activeChoice === 'draw' || pendingChoice === 'draw'}
+                       onClick={() => handleSelectPrediction('draw')}
+                     />
+                     <PredictOption
+                       label={teamB.name}
+                       active={activeChoice === 'team2' || pendingChoice === 'team2'}
+                       onClick={() => handleSelectPrediction('team2')}
+                     />
+                   </div>
+                 )}
+
+                 {!user && isAuthReady && canPredict && (
+                   <p className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                     Sign in to submit your prediction.
+                   </p>
+                 )}
+
+                 {predictionSuccess && (
+                   <p className="mt-3 text-xs text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
+                     Prediction saved successfully!
+                   </p>
+                 )}
+                 {predictionError && (
+                   <p className="mt-3 text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                     {predictionError}
+                   </p>
+                 )}
+               </>
+             )}
           </div>
+        )}
+
+        {pendingChoice && (
+          <PredictionConfirmDialog
+            choiceLabel={choiceLabel(pendingChoice, teamA.name, teamB.name)}
+            isSaving={predictionSaving}
+            onCancel={() => setPendingChoice(null)}
+            onConfirm={confirmPrediction}
+          />
+        )}
+
+        {showLoginPrompt && (
+          <LoginPromptDialog
+            onCancel={() => setShowLoginPrompt(false)}
+            onLogin={() => {
+              setShowLoginPrompt(false);
+              onNavigateToProfile?.();
+            }}
+          />
         )}
 
         {/* AI Analysis Tab */}
@@ -823,14 +1007,91 @@ function MatchDetails({
   )
 }
 
-function PredictOption({ label, active, onClick }: { label: string, active: boolean, onClick: () => void }) {
+function PredictOption({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
-    <button 
-       onClick={onClick}
-       className={`py-3 px-2 rounded-xl border text-sm font-semibold transition-all shadow-sm active:scale-95 ${active ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-200'}`}
+    <button
+      type="button"
+      onClick={onClick}
+      className={`py-3 px-2 rounded-xl border text-sm font-semibold transition-all shadow-sm active:scale-95 ${active ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-200'}`}
     >
       {label}
     </button>
+  );
+}
+
+function PredictionConfirmDialog({
+  choiceLabel: pick,
+  isSaving,
+  onConfirm,
+  onCancel,
+}: {
+  choiceLabel: string;
+  isSaving: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+      <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-6 w-full max-w-sm">
+        <h3 className="text-lg font-bold text-gray-900 mb-2">Confirm Prediction</h3>
+        <p className="text-sm text-gray-600 mb-6">
+          Submit <span className="font-semibold text-indigo-700">{pick}</span> for this match?
+        </p>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isSaving}
+            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-700 font-semibold text-sm hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isSaving}
+            className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold text-sm hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {isSaving ? 'Saving...' : 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LoginPromptDialog({
+  onLogin,
+  onCancel,
+}: {
+  onLogin: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+      <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-6 w-full max-w-sm">
+        <h3 className="text-lg font-bold text-gray-900 mb-2">Sign in required</h3>
+        <p className="text-sm text-gray-600 mb-6">
+          Please sign in with Google to submit your match prediction.
+        </p>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-700 font-semibold text-sm hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onLogin}
+            className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold text-sm hover:bg-indigo-700"
+          >
+            Go to Profile
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

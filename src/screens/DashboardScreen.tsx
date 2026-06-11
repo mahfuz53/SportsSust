@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { User, MatchData, TeamInfo } from '../types';
-import { Trophy, ChevronRight, Share2, MessageSquare, TrendingUp, ThumbsUp, MapPin } from 'lucide-react';
+import { Trophy, ChevronRight, Share2, MapPin } from 'lucide-react';
 import { format } from 'date-fns';
 import { TopPredictorsCarousel } from '../components/TopPredictorsCarousel';
 import { useI18n } from '../lib/i18n';
@@ -13,35 +13,18 @@ import {
   resolveTeam,
   withComputedMatchStatuses,
 } from '../lib/matchUtils';
-
-const BUZZ_FEED = [
-  { id: '1', user: 'Shakil Ahmed', text: 'Germany looking very strong this year! Expecting a solid 2-0 win in their opener.', likes: 24, time: '2m ago' },
-  { id: '2', user: 'Nadia I.', text: 'Trending: 82% of top predictors are backing Brazil vs Switzerland! 🇧🇷', likes: 156, time: '15m ago', isSystem: true },
-  { id: '3', user: 'Tahmid Rahman', text: 'Are we underestimating the underdogs here? The draw might be the smart prediction.', likes: 8, time: '1h ago' },
-];
+import { useLeaderboard } from '../hooks/useLeaderboard';
+import { useWorldCupData } from '../hooks/useWorldCupData';
 
 export function DashboardScreen({
   onNavigate,
 }: {
   onNavigate: (tab: string, matchId?: string) => void;
 }) {
-  const [leaderboard, setLeaderboard] = useState<User[]>([]);
-  const [matches, setMatches] = useState<MatchData[]>([]);
-  const [teams, setTeams] = useState<TeamInfo[]>([]);
+  const { leaderboard, isLoading: leaderboardLoading } = useLeaderboard();
+  const { matches, teams } = useWorldCupData();
   const [tick, setTick] = useState(0);
   const { t } = useI18n();
-
-  useEffect(() => {
-    Promise.all([
-      fetch('/api/leaderboard').then((res) => res.json()),
-      fetch('/api/matches').then((res) => res.json()),
-      fetch('/api/teams').then((res) => res.json()),
-    ]).then(([lData, mData, tData]) => {
-      if (Array.isArray(lData)) setLeaderboard(lData);
-      if (Array.isArray(mData)) setMatches(mData);
-      if (Array.isArray(tData)) setTeams(tData);
-    });
-  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => setTick((n) => n + 1), 30000);
@@ -125,46 +108,6 @@ export function DashboardScreen({
       <section>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-pink-500" />
-            {t('dashboard.community_buzz')}
-          </h2>
-        </div>
-        <div className="space-y-3">
-          {BUZZ_FEED.map((buzz) => (
-            <div
-              key={buzz.id}
-              className={`bg-white rounded-2xl p-4 shadow-sm border ${buzz.isSystem ? 'border-pink-100 bg-pink-50/30' : 'border-gray-100'} flex gap-3`}
-            >
-              <div
-                className={`w-8 h-8 rounded-full ${buzz.isSystem ? 'bg-pink-100 text-pink-600' : 'bg-indigo-50 text-indigo-600'} flex items-center justify-center shrink-0`}
-              >
-                {buzz.isSystem ? <TrendingUp className="w-4 h-4" /> : <MessageSquare className="w-4 h-4" />}
-              </div>
-              <div className="flex-1">
-                <div className="flex justify-between items-start mb-1">
-                  <span className="font-bold text-gray-900 text-sm">{buzz.user}</span>
-                  <span className="text-[10px] text-gray-400 font-medium">{buzz.time}</span>
-                </div>
-                <p className="text-sm text-gray-600 leading-relaxed mb-2">{buzz.text}</p>
-                <div className="flex gap-4">
-                  <button className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-indigo-600 transition-colors">
-                    <ThumbsUp className="w-3.5 h-3.5" />
-                    {buzz.likes}
-                  </button>
-                  <button className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-indigo-600 transition-colors">
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    Reply
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
             <Trophy className="w-5 h-5 text-yellow-500" />
             Main Leaderboard
           </h2>
@@ -173,6 +116,16 @@ export function DashboardScreen({
           </button>
         </div>
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden divide-y divide-gray-50">
+          {leaderboardLoading && leaderboard.length === 0 && (
+            <div className="p-6 text-center text-sm text-gray-500 animate-pulse">
+              Loading leaderboard...
+            </div>
+          )}
+          {!leaderboardLoading && leaderboard.length === 0 && (
+            <div className="p-6 text-center text-sm text-gray-500">
+              No predictions yet. Be the first to predict and climb the board!
+            </div>
+          )}
           {leaderboard.slice(0, 5).map((user, index) => (
             <div key={user.id} className="flex items-center p-4">
               <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center font-bold text-gray-500 text-sm mr-3">

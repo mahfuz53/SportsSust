@@ -78,11 +78,11 @@ export function MatchTeamsDisplay({
 
       {status && (
         <div className="mt-3 text-center">
-          {/* <div
+          <div
             className={`inline-block text-2xl font-black text-gray-900 tracking-wider px-4 py-2 rounded-xl ${scoreBgClass}`}
           >
             {status.score}
-          </div> */}
+          </div> 
           <span className={`text-[10px] font-bold uppercase mt-1 block ${statusToneClass}`}>
             {status.label}
           </span>

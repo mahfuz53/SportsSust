@@ -55,6 +55,7 @@ export type MatchData = {
   round?: string;
   scoreA: number | null;
   scoreB: number | null;
+  winner?: string | null;
   venue?: string;
   preMatchAnalysis: string | null;
   postMatchAnalysis: string | null;

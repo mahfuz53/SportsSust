@@ -55,6 +55,7 @@ export default function App() {
           <MatchesScreen
             initialMatchId={pendingMatchId}
             onInitialMatchHandled={() => setPendingMatchId(null)}
+            onNavigateToProfile={() => setCurrentTab('profile')}
           />
         );
       case 'teams':

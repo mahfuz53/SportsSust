@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { User, Badge } from '../types';
-import { Award, Zap, Target, History, HelpCircle, Trophy, Clock, AlertCircle } from 'lucide-react';
+import { Award, Zap, Target, History, HelpCircle, Trophy, Clock, AlertCircle, UserCircle } from 'lucide-react';
 import { User as FirebaseUser, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { auth } from '../firebase';
 import { getFirebaseAuthErrorMessage, isLikelyUnauthorizedHost } from '../lib/firebaseAuthErrors';
@@ -11,6 +11,57 @@ import {
   saveUserProfile,
   type UserProfileResponse,
 } from '../lib/userProfileApi';
+
+function resolveProfilePhotoUrl(
+  firebaseUser: FirebaseUser | null,
+  userProfile: UserProfileResponse | null
+): string | null {
+  const url = firebaseUser?.photoURL || userProfile?.photoURL;
+  return url?.trim() ? url : null;
+}
+
+function ProfileAvatar({
+  photoURL,
+  displayName,
+  sizeClass = 'w-24 h-24',
+  iconClass = 'w-12 h-12',
+  className = '',
+}: {
+  photoURL: string | null;
+  displayName?: string | null;
+  sizeClass?: string;
+  iconClass?: string;
+  className?: string;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [photoURL]);
+
+  const showImage = Boolean(photoURL) && !imageFailed;
+
+  if (showImage) {
+    return (
+      <img
+        src={photoURL!}
+        alt={displayName || 'Profile photo'}
+        referrerPolicy="no-referrer"
+        onError={() => setImageFailed(true)}
+        className={`${sizeClass} rounded-full object-cover border-4 border-white shadow-lg ${className}`}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`${sizeClass} rounded-full bg-indigo-100 flex items-center justify-center border-4 border-white shadow-lg ${className}`}
+      aria-label={displayName ? `${displayName} profile` : 'Default profile avatar'}
+    >
+      <UserCircle className={`${iconClass} text-indigo-400`} strokeWidth={1.5} />
+    </div>
+  );
+}
 
 export function ProfileScreen() {
   const [userId, setUserId] = useState<string>('');
@@ -158,13 +209,27 @@ export function ProfileScreen() {
   };
 
   const { currentTier, nextTier, progress } = getTierInfo(currentUser.score);
+  const profilePhotoURL = resolveProfilePhotoUrl(firebaseUser, userProfile);
+  const profileDisplayName =
+    firebaseUser?.displayName || userProfile?.displayName || null;
 
   return (
     <div className="pb-24 pt-6 flex flex-col h-screen overflow-hidden">
       <div className="px-4 mb-4 shrink-0 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Profile</h1>
-          <p className="text-gray-500 text-sm mt-1">আপনার পারফরম্যান্স ও তথ্য</p>
+        <div className="flex items-center gap-3">
+          {firebaseUser && (
+            <ProfileAvatar
+              photoURL={profilePhotoURL}
+              displayName={profileDisplayName}
+              sizeClass="w-12 h-12"
+              iconClass="w-7 h-7"
+              className="border-2 shrink-0"
+            />
+          )}
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Profile</h1>
+            <p className="text-gray-500 text-sm mt-1">আপনার পারফরম্যান্স ও তথ্য</p>
+          </div>
         </div>
       </div>
 
@@ -225,13 +290,14 @@ export function ProfileScreen() {
             ) : (
             <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 mb-8">
               <div className="flex flex-col items-center text-center">
-                <img
-                  src={firebaseUser.photoURL || userProfile?.photoURL || currentUser.avatar}
-                  alt={firebaseUser.displayName || 'Profile'}
-                  className="w-24 h-24 rounded-full mb-4 border-4 border-white shadow-lg object-cover"
-                />
+                <div className="mb-4">
+                  <ProfileAvatar
+                    photoURL={profilePhotoURL}
+                    displayName={profileDisplayName}
+                  />
+                </div>
                 <h2 className="text-xl font-bold text-gray-900">
-                  {firebaseUser.displayName || userProfile?.displayName || 'Google User'}
+                  {profileDisplayName || 'Google User'}
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">{firebaseUser.email || userProfile?.email}</p>
                 {isSubscriber && (
@@ -472,10 +538,23 @@ export function ProfileScreen() {
            )}
 
            <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 flex flex-col items-center text-center">
-              <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center mb-4 border-4 border-white shadow-lg">
-                 <Zap className="w-8 h-8 text-indigo-600" />
+              <div className="mb-4">
+                {firebaseUser ? (
+                  <ProfileAvatar
+                    photoURL={profilePhotoURL}
+                    displayName={profileDisplayName}
+                    sizeClass="w-16 h-16"
+                    iconClass="w-9 h-9"
+                  />
+                ) : (
+                  <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center border-4 border-white shadow-lg">
+                    <Zap className="w-8 h-8 text-indigo-600" />
+                  </div>
+                )}
               </div>
-              <h2 className="text-xl font-bold text-gray-900 mb-2">PRO Subscriber</h2>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">
+                {firebaseUser && profileDisplayName ? profileDisplayName : 'PRO Subscriber'}
+              </h2>
               <p className="text-sm text-gray-500 leading-relaxed mb-6">
                 Connect your Google account to unlock subscriber perks, save your progress seamlessly, and appear on the global, verified leaderboard.
               </p>

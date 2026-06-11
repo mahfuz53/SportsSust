@@ -8,3 +8,4 @@ coverage/
 !.env.example
 data/match-results.json
 data/user-profiles.json
+serviceAccountKey.json

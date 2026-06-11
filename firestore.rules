@@ -1,8 +1,54 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    function isMatchAdmin() {
+      return request.auth != null
+        && request.auth.token.email == 'mahfuz53@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    match /worldcup_matches/{matchId} {
+      allow read: if true;
+
+      allow create: if false;
+
+      allow update: if isMatchAdmin()
+        && request.resource.data.matchId == matchId
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['team1Score', 'team2Score', 'winner'])
+        && (request.resource.data.team1Score is int
+            || request.resource.data.team1Score == null)
+        && (request.resource.data.team2Score is int
+            || request.resource.data.team2Score == null)
+        && (request.resource.data.winner == null
+            || request.resource.data.winner is string);
+
+      allow delete: if false;
+
+      match /predictions/{userId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+
+        allow create, update: if request.auth != null
+          && request.auth.uid == userId
+          && request.resource.data.userId == userId
+          && request.resource.data.matchId == matchId
+          && request.resource.data.choice in ['team1', 'team2', 'draw']
+          && request.resource.data.processed == false
+          && (!('pointsAwarded' in request.resource.data)
+              || request.resource.data.pointsAwarded == null);
+
+        allow delete: if false;
+      }
+    }
+
+    match /leaderboard/{userId} {
+      allow read: if true;
+      allow write: if false;
     }
   }
 }

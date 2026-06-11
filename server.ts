@@ -4,6 +4,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { generateMatchAnalysis, fetchLiveUpdates, fetchMatchResult, logGeminiStartupStatus } from "./geminiService";
 import { applyMatchStatus } from "./matchStatus";
+import { verifyAdminRequest } from "./adminAuth";
 import { getBearerToken, verifyIdToken } from "./firebaseAuthService";
 import {
   getWorldCupData,
@@ -12,14 +13,20 @@ import {
   refreshWorldCupData,
   updateMatchResult,
 } from "./worldCupService";
+import {
+  getUserPredictionAdmin,
+  saveUserPredictionAdmin,
+  scorePredictionsForMatch,
+} from "./predictionScoringService";
+import { canSubmitPrediction } from "./src/lib/predictionUtils";
 import { getUserProfile, upsertUserProfile } from "./userProfileService";
 import type { MatchData } from "./src/types";
+import type { PredictionChoice } from "./src/lib/predictionTypes";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 logGeminiStartupStatus();
-initWorldCupData();
 
 const app = express();
 const PORT = 3000;
@@ -143,9 +150,9 @@ app.get("/api/groups", (_req, res) => {
   }
 });
 
-app.post("/api/refresh", (_req, res) => {
+app.post("/api/refresh", async (_req, res) => {
   try {
-    refreshWorldCupData();
+    await refreshWorldCupData();
     res.json({ success: true });
   } catch (err) {
     console.error("[WorldCup] refresh error:", err);
@@ -153,34 +160,101 @@ app.post("/api/refresh", (_req, res) => {
   }
 });
 
-app.post("/api/predict", (req, res) => {
-  const { userId, matchId, choice } = req.body;
+app.get("/api/predictions/me", async (req, res) => {
+  const idToken = getBearerToken(req.headers.authorization);
+  if (!idToken) {
+    return res.status(401).json({ error: "Missing authorization token." });
+  }
+
+  const verified = await verifyIdToken(idToken);
+  if (!verified) {
+    return res.status(401).json({ error: "Invalid or expired sign-in token." });
+  }
+
+  const matchId = typeof req.query.matchId === "string" ? req.query.matchId : "";
+  if (!matchId) {
+    return res.status(400).json({ error: "matchId is required." });
+  }
+
+  try {
+    const prediction = await getUserPredictionAdmin(matchId, verified.uid);
+    res.json({ prediction });
+  } catch (err) {
+    console.error("[Predictions] fetch error:", err);
+    res.status(500).json({ error: "Failed to load prediction." });
+  }
+});
+
+app.post("/api/predictions/submit", async (req, res) => {
+  const idToken = getBearerToken(req.headers.authorization);
+  if (!idToken) {
+    return res.status(401).json({ error: "Missing authorization token." });
+  }
+
+  const verified = await verifyIdToken(idToken);
+  if (!verified) {
+    return res.status(401).json({ error: "Invalid or expired sign-in token." });
+  }
+
+  const { matchId, choice } = req.body ?? {};
+  if (!matchId || typeof matchId !== "string") {
+    return res.status(400).json({ error: "matchId is required." });
+  }
+
+  const validChoices: PredictionChoice[] = ["team1", "team2", "draw"];
+  if (!validChoices.includes(choice)) {
+    return res.status(400).json({ error: "Invalid prediction choice." });
+  }
 
   const matches = loadMatchesWithAnalysis();
   const match = matches.find((m) => m.id === matchId);
-  if (!match) return res.status(404).json({ error: "Match not found" });
+  if (!match) {
+    return res.status(404).json({ error: "Match not found." });
+  }
 
-  const now = Date.now();
-  if (match.status !== "upcoming") {
+  if (!canSubmitPrediction(match)) {
     return res.status(403).json({ error: "Predictions are closed for this match." });
   }
 
-  const matchTime = new Date(match.time).getTime();
-  if (matchTime - now < 30 * 60 * 1000 && matchTime > now) {
-    return res.status(403).json({ error: "Predictions close 30 minutes before match." });
+  try {
+    const prediction = await saveUserPredictionAdmin({
+      matchId,
+      userId: verified.uid,
+      choice,
+      displayName: verified.displayName,
+      email: verified.email,
+      photoURL: verified.photoURL,
+    });
+    res.json({ success: true, prediction });
+  } catch (err) {
+    console.error("[Predictions] submit error:", err);
+    res.status(500).json({
+      error: err instanceof Error ? err.message : "Failed to save prediction.",
+    });
+  }
+});
+
+app.post("/api/match/score-predictions", async (req, res) => {
+  const { matchId } = req.body ?? {};
+  if (!matchId || typeof matchId !== "string") {
+    return res.status(400).json({ error: "matchId is required." });
   }
 
-  const existingIndex = predictions.findIndex((p) => p.userId === userId && p.matchId === matchId);
-  if (existingIndex > -1) {
-    predictions[existingIndex].choice = choice;
-  } else {
-    predictions.push({ userId, matchId, choice, processed: false });
+  try {
+    const result = await scorePredictionsForMatch(matchId);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[Predictions] score error:", err);
+    res.status(500).json({ error: "Failed to score predictions." });
   }
-
-  res.json({ success: true, message: "Prediction saved." });
 });
 
 app.post("/api/gemini/match-result", async (req, res) => {
+  const adminAuth = await verifyAdminRequest(req.headers.authorization);
+  if (!adminAuth.ok) {
+    return res.status(adminAuth.status).json({ error: adminAuth.error });
+  }
+
   const { matchId } = req.body;
   const { teams } = getWorldCupData();
   const matches = loadMatchesWithAnalysis();
@@ -200,7 +274,7 @@ app.post("/api/gemini/match-result", async (req, res) => {
     });
   }
 
-  const updated = updateMatchResult(matchId, result.scoreA, result.scoreB, "gemini");
+  const updated = await updateMatchResult(matchId, result.scoreA, result.scoreB, "gemini");
   const { standings } = getWorldCupData();
 
   res.json({
@@ -250,6 +324,15 @@ app.post("/api/gemini/live-updates", async (_req, res) => {
 });
 
 async function setupVite() {
+  try {
+    await initWorldCupData();
+  } catch (err) {
+    console.error(
+      "[WorldCup] Firestore init failed. Seed worldcup_matches and set GOOGLE_APPLICATION_CREDENTIALS.",
+      err
+    );
+  }
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
