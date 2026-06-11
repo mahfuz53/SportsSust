@@ -581,7 +581,7 @@ function MatchDetails({
   const [adminWinner, setAdminWinner] = useState<'team1' | 'team2' | 'draw'>('team1');
   const [adminSaving, setAdminSaving] = useState(false);
   const [adminSaveError, setAdminSaveError] = useState<string | null>(null);
-  const [adminSaveSuccess, setAdminSaveSuccess] = useState(false);
+  const [adminSaveMessage, setAdminSaveMessage] = useState<string | null>(null);
 
   const team1Name = liveMatch.teamAName ?? teamA.name;
   const team2Name = liveMatch.teamBName ?? teamB.name;
@@ -653,10 +653,14 @@ function MatchDetails({
 
     setAdminSaving(true);
     setAdminSaveError(null);
-    setAdminSaveSuccess(false);
+    setAdminSaveMessage(null);
     try {
-      await updateMatchResultInFirestore(liveMatch.id, score1, score2, winner);
-      setAdminSaveSuccess(true);
+      const { scored } = await updateMatchResultInFirestore(liveMatch.id, score1, score2, winner);
+      setAdminSaveMessage(
+        scored > 0
+          ? `Result saved. Scored ${scored} prediction(s) (+10 / -5 pts).`
+          : 'Result saved. All users will see the update in real time.'
+      );
     } catch (e) {
       console.error(e);
       setAdminSaveError(
@@ -827,9 +831,9 @@ function MatchDetails({
                 <Save className="w-4 h-4" />
                 {adminSaving ? 'Saving to Firestore...' : 'Save Result'}
               </button>
-              {adminSaveSuccess && (
+              {adminSaveMessage && (
                 <p className="mt-2 text-xs text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
-                  Result saved. All users will see the update in real time.
+                  {adminSaveMessage}
                 </p>
               )}
               {adminSaveError && (

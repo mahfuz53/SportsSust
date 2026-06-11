@@ -8,8 +8,12 @@ import { Moon, Sun, Languages } from 'lucide-react';
 import { Footer } from './components/Footer';
 import { motion, AnimatePresence } from 'motion/react';
 import { useI18n } from './lib/i18n';
+import { useAuth } from './hooks/useAuth';
+import { useAutoScorePredictions } from './hooks/useAutoScorePredictions';
 
 export default function App() {
+  const { isAdmin, isAuthReady } = useAuth();
+  useAutoScorePredictions(isAdmin, isAuthReady);
   const [currentTab, setCurrentTab] = useState('dashboard');
   const [pendingMatchId, setPendingMatchId] = useState<string | null>(null);
 

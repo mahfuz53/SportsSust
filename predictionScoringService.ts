@@ -1,7 +1,11 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminFirestore } from './firestoreAdmin';
 import { WORLDCUP_MATCHES_COLLECTION } from './src/lib/worldcupMatchTransform';
-import { getActualChoice, isPredictionCorrect } from './src/lib/predictionUtils';
+import {
+  isMatchWinnerFinalized,
+  isPredictionCorrect,
+  resolveActualChoiceFromMatch,
+} from './src/lib/predictionUtils';
 import {
   LEADERBOARD_COLLECTION,
   PREDICTIONS_SUBCOLLECTION,
@@ -84,14 +88,22 @@ export async function scorePredictionsForMatch(matchId: string): Promise<{
   }
 
   const match = matchSnap.data()!;
-  const team1Score = match.team1Score;
-  const team2Score = match.team2Score;
 
-  if (team1Score === null || team2Score === undefined || team2Score === null) {
+  if (!isMatchWinnerFinalized(match.winner)) {
     return { scored: 0, skipped: 0 };
   }
 
-  const actual = getActualChoice(match.team1, match.team2, team1Score, team2Score);
+  const actual = resolveActualChoiceFromMatch({
+    team1: match.team1,
+    team2: match.team2,
+    team1Score: match.team1Score ?? null,
+    team2Score: match.team2Score ?? null,
+    winner: match.winner ?? null,
+  });
+
+  if (!actual) {
+    return { scored: 0, skipped: 0 };
+  }
   const predictionsSnap = await matchRef.collection(PREDICTIONS_SUBCOLLECTION).get();
 
   let scored = 0;
@@ -108,19 +120,17 @@ export async function scorePredictionsForMatch(matchId: string): Promise<{
       ? PREDICTION_POINTS_CORRECT
       : PREDICTION_POINTS_WRONG;
 
-    await predDoc.ref.update({
-      processed: true,
-      pointsAwarded: points,
-      updatedAt: Date.now(),
-    });
+    const didScore = await scorePredictionInTransaction(
+      predDoc.ref,
+      prediction,
+      points
+    );
 
-    await applyLeaderboardPoints(prediction.userId, {
-      displayName: prediction.displayName,
-      email: prediction.email,
-      photoURL: prediction.photoURL,
-    }, points);
-
-    scored += 1;
+    if (didScore) {
+      scored += 1;
+    } else {
+      skipped += 1;
+    }
   }
 
   if (scored > 0) {
@@ -130,38 +140,52 @@ export async function scorePredictionsForMatch(matchId: string): Promise<{
   return { scored, skipped };
 }
 
-async function applyLeaderboardPoints(
-  userId: string,
-  profile: { displayName: string; email: string; photoURL: string },
-  pointsDelta: number
-): Promise<void> {
+async function scorePredictionInTransaction(
+  predictionRef: FirebaseFirestore.DocumentReference,
+  prediction: MatchPrediction,
+  points: number
+): Promise<boolean> {
   const db = getAdminFirestore();
-  const ref = db.collection(LEADERBOARD_COLLECTION).doc(userId);
+  const leaderboardRef = db.collection(LEADERBOARD_COLLECTION).doc(prediction.userId);
+  const now = Date.now();
 
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    const now = Date.now();
+  return db.runTransaction(async (tx) => {
+    const predSnap = await tx.get(predictionRef);
+    const lbSnap = await tx.get(leaderboardRef);
 
-    if (snap.exists) {
-      const current = snap.data()!;
-      tx.update(ref, {
-        score: (current.score ?? 0) + pointsDelta,
-        displayName: profile.displayName || current.displayName,
-        email: profile.email || current.email,
-        photoURL: profile.photoURL || current.photoURL || '',
+    if (!predSnap.exists) return false;
+
+    const currentPrediction = predSnap.data() as MatchPrediction;
+    if (currentPrediction.processed) return false;
+
+    tx.update(predictionRef, {
+      processed: true,
+      pointsAwarded: points,
+      updatedAt: now,
+    });
+
+    if (lbSnap.exists) {
+      const current = lbSnap.data()!;
+      tx.update(leaderboardRef, {
+        score: (current.score ?? 0) + points,
+        displayName: prediction.displayName || current.displayName,
+        email: prediction.email || current.email,
+        photoURL: prediction.photoURL || current.photoURL || '',
         updatedAt: now,
       });
     } else {
-      tx.set(ref, {
-        userId,
-        displayName: profile.displayName,
-        email: profile.email,
-        photoURL: profile.photoURL || '',
-        score: pointsDelta,
+      tx.set(leaderboardRef, {
+        userId: prediction.userId,
+        displayName: prediction.displayName,
+        email: prediction.email,
+        photoURL: prediction.photoURL || '',
+        score: points,
         matchesPredicted: 0,
         updatedAt: now,
       });
     }
+
+    return true;
   });
 }
 

@@ -32,7 +32,8 @@ service cloud.firestore {
       allow delete: if false;
 
       match /predictions/{userId} {
-        allow read: if request.auth != null && request.auth.uid == userId;
+        allow read: if request.auth != null
+          && (request.auth.uid == userId || isMatchAdmin());
 
         allow create, update: if request.auth != null
           && request.auth.uid == userId
@@ -42,6 +43,13 @@ service cloud.firestore {
           && request.resource.data.processed == false
           && (!('pointsAwarded' in request.resource.data)
               || request.resource.data.pointsAwarded == null);
+
+        allow update: if isMatchAdmin()
+          && resource.data.processed == false
+          && request.resource.data.processed == true
+          && request.resource.data.pointsAwarded in [10, -5]
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['processed', 'pointsAwarded', 'updatedAt']);
 
         allow delete: if false;
       }
@@ -69,6 +77,16 @@ service cloud.firestore {
            && request.resource.data.diff(resource.data).affectedKeys()
                 .hasOnly(['displayName', 'email', 'photoURL', 'updatedAt']))
         );
+
+      allow create: if isMatchAdmin()
+        && request.resource.data.userId == userId
+        && request.resource.data.matchesPredicted == 0;
+
+      allow update: if isMatchAdmin()
+        && request.resource.data.userId == userId
+        && request.resource.data.matchesPredicted == resource.data.matchesPredicted
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['score', 'displayName', 'email', 'photoURL', 'updatedAt']);
 
       allow delete: if false;
     }
