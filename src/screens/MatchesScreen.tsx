@@ -577,14 +577,50 @@ function MatchDetails({
   const [predictionSuccess, setPredictionSuccess] = useState(false);
   const [adminScore1, setAdminScore1] = useState('');
   const [adminScore2, setAdminScore2] = useState('');
+  const [adminWinner, setAdminWinner] = useState<'team1' | 'team2' | 'draw'>('team1');
   const [adminSaving, setAdminSaving] = useState(false);
   const [adminSaveError, setAdminSaveError] = useState<string | null>(null);
   const [adminSaveSuccess, setAdminSaveSuccess] = useState(false);
 
+  const team1Name = liveMatch.teamAName ?? teamA.name;
+  const team2Name = liveMatch.teamBName ?? teamB.name;
+
   useEffect(() => {
     setAdminScore1(liveMatch.scoreA !== null ? String(liveMatch.scoreA) : '');
     setAdminScore2(liveMatch.scoreB !== null ? String(liveMatch.scoreB) : '');
-  }, [liveMatch.scoreA, liveMatch.scoreB, liveMatch.id]);
+
+    if (liveMatch.winner === team1Name) {
+      setAdminWinner('team1');
+    } else if (liveMatch.winner === team2Name) {
+      setAdminWinner('team2');
+    } else if (
+      liveMatch.winner === 'Draw' ||
+      (liveMatch.scoreA !== null &&
+        liveMatch.scoreB !== null &&
+        liveMatch.scoreA === liveMatch.scoreB)
+    ) {
+      setAdminWinner('draw');
+    } else if (
+      liveMatch.scoreA !== null &&
+      liveMatch.scoreB !== null &&
+      liveMatch.scoreA > liveMatch.scoreB
+    ) {
+      setAdminWinner('team1');
+    } else if (
+      liveMatch.scoreA !== null &&
+      liveMatch.scoreB !== null &&
+      liveMatch.scoreB > liveMatch.scoreA
+    ) {
+      setAdminWinner('team2');
+    }
+  }, [
+    liveMatch.id,
+    liveMatch.scoreA,
+    liveMatch.scoreB,
+    liveMatch.winner,
+    team1Name,
+    team2Name,
+  ]);
 
   const saveAdminResult = async () => {
     const score1 = Number(adminScore1);
@@ -594,17 +630,27 @@ function MatchDetails({
       return;
     }
 
+    const winner =
+      adminWinner === 'team1' ? team1Name : adminWinner === 'team2' ? team2Name : null;
+
+    if (adminWinner === 'team1' && score1 <= score2) {
+      setAdminSaveError(`${team1Name} cannot win with a lower or equal score.`);
+      return;
+    }
+    if (adminWinner === 'team2' && score2 <= score1) {
+      setAdminSaveError(`${team2Name} cannot win with a lower or equal score.`);
+      return;
+    }
+    if (adminWinner === 'draw' && score1 !== score2) {
+      setAdminSaveError('Draw requires equal scores for both teams.');
+      return;
+    }
+
     setAdminSaving(true);
     setAdminSaveError(null);
     setAdminSaveSuccess(false);
     try {
-      await updateMatchResultInFirestore(
-        liveMatch.id,
-        teamA.name,
-        teamB.name,
-        score1,
-        score2
-      );
+      await updateMatchResultInFirestore(liveMatch.id, score1, score2, winner);
       setAdminSaveSuccess(true);
     } catch (e) {
       console.error(e);
@@ -755,6 +801,18 @@ function MatchDetails({
                   />
                 </label>
               </div>
+              <label className="block text-xs font-medium text-gray-600 mb-3">
+                Winner
+                <select
+                  value={adminWinner}
+                  onChange={(e) => setAdminWinner(e.target.value as 'team1' | 'team2' | 'draw')}
+                  className="mt-1 block w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                >
+                  <option value="team1">{team1Name}</option>
+                  <option value="team2">{team2Name}</option>
+                  <option value="draw">Draw</option>
+                </select>
+              </label>
               <button
                 type="button"
                 onClick={saveAdminResult}
