@@ -1,17 +1,9 @@
-export type Badge = {
-  id: string;
-  name: string;
-  icon: string;
-  description: string;
-};
-
 export type User = {
   id: string;
   name: string;
   score: number;
   matchesPredicted: number;
   avatar: string;
-  badges?: Badge[];
 };
 
 export type Player = {

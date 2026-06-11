@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
-import { User, Badge } from '../types';
-import { Award, Zap, Target, History, HelpCircle, Trophy, Clock, AlertCircle, UserCircle } from 'lucide-react';
+import { Zap, Target, History, HelpCircle, Trophy, Clock, AlertCircle, UserCircle, Loader2 } from 'lucide-react';
+import { useProfileActivity } from '../hooks/useProfileActivity';
 import { User as FirebaseUser, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { auth } from '../firebase';
 import { getFirebaseAuthErrorMessage, isLikelyUnauthorizedHost } from '../lib/firebaseAuthErrors';
@@ -72,6 +72,9 @@ export function ProfileScreen() {
   const [userProfile, setUserProfile] = useState<UserProfileResponse | null>(null);
   const [isSubscriber, setIsSubscriber] = useState(false);
   const showHostWarning = isLikelyUnauthorizedHost();
+  const { activity, isLoading: isActivityLoading, error: activityError } = useProfileActivity(
+    firebaseUser?.uid
+  );
 
   useEffect(() => {
     let savedId = localStorage.getItem('autoconUserId');
@@ -127,65 +130,17 @@ export function ProfileScreen() {
     }
   };
 
-  // Hardcoded mock for current user visual
-  const currentUser: User = { 
-    id: userId || "AUTOCON-....", 
-    name: "Arif Hossain", 
-    score: 120, 
-    matchesPredicted: 14, 
-    avatar: "https://i.pravatar.cc/150?u=arif",
-    badges: [
-      { id: "b1", name: "Perfect 10", icon: "🎯", description: "Got 10 correct predictions in a row." },
-      { id: "b2", name: "Early Bird", icon: "⚡", description: "Predicted 5 matches 24h before kickoff." },
-      { id: "b3", name: "Top 100", icon: "🏅", description: "Reached top 100 on the leaderboard." }
-    ]
-  };
+  const totalScore = activity?.totalScore ?? 0;
+  const matchesPredicted = activity?.matchesPredicted ?? 0;
+  const leaderboardRank = activity?.leaderboardRank;
+  const totalPlayers = activity?.totalPlayers ?? 0;
 
-  // Mock scoring history Data
-  const data = [
-    { match: 'M1', points: 0 },
-    { match: 'M2', points: 10 },
-    { match: 'M3', points: 5 },
-    { match: 'M4', points: 15 },
-    { match: 'M5', points: 25 },
-    { match: 'M6', points: 20 },
-    { match: 'M7', points: 50 },
-    { match: 'M14', points: 120 },
-  ];
+  const chartData = (activity?.scoringHistory ?? []).map((point) => ({
+    match: point.label,
+    points: point.cumulativeScore,
+  }));
 
-  // Mock Past Predictions Data
-  const pastPredictions = [
-    {
-      id: 'm1',
-      matchDate: 'Jun 01, 2026',
-      teamA: { name: 'Brazil', flag: '🇧🇷' },
-      teamB: { name: 'France', flag: '🇫🇷' },
-      predicted: 'Brazil',
-      actual: 'Brazil',
-      isCorrect: true,
-      pointsEarned: 10
-    },
-    {
-      id: 'm2',
-      matchDate: 'Jun 03, 2026',
-      teamA: { name: 'Argentina', flag: '🇦🇷' },
-      teamB: { name: 'Germany', flag: '🇩🇪' },
-      predicted: 'Argentina',
-      actual: 'Draw',
-      isCorrect: false,
-      pointsEarned: 0
-    },
-    {
-      id: 'm3',
-      matchDate: 'Jun 05, 2026',
-      teamA: { name: 'Spain', flag: '🇪🇸' },
-      teamB: { name: 'Portugal', flag: '🇵🇹' },
-      predicted: 'Draw',
-      actual: 'Draw',
-      isCorrect: true,
-      pointsEarned: 5
-    }
-  ];
+  const pastPredictions = activity?.pastPredictions ?? [];
 
   const getTierInfo = (score: number) => {
     const tiers = [
@@ -208,7 +163,7 @@ export function ProfileScreen() {
     return { currentTier, nextTier, progress };
   };
 
-  const { currentTier, nextTier, progress } = getTierInfo(currentUser.score);
+  const { currentTier, nextTier, progress } = getTierInfo(totalScore);
   const profilePhotoURL = resolveProfilePhotoUrl(firebaseUser, userProfile);
   const profileDisplayName =
     firebaseUser?.displayName || userProfile?.displayName || null;
@@ -264,7 +219,7 @@ export function ProfileScreen() {
                 </div>
                 <h2 className="text-xl font-bold text-gray-900 mb-2">Sign in to view your activity</h2>
                 <p className="text-sm text-gray-500 leading-relaxed mb-6 max-w-xs">
-                  Connect your Google account to see your profile, scores, badges, and prediction history.
+                  Connect your Google account to see your profile, scores, and prediction history.
                 </p>
                 <button
                   type="button"
@@ -332,37 +287,54 @@ export function ProfileScreen() {
 
             {firebaseUser && (
             <>
+            {activityError && (
+              <div className="mb-4 bg-red-50 border border-red-100 rounded-2xl p-4 text-sm text-red-700">
+                {activityError}
+              </div>
+            )}
+
             <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 flex flex-col items-center mb-8 relative">
          <div className="absolute top-4 right-4 bg-indigo-50 text-indigo-700 text-xs font-bold px-3 py-1 rounded-full">
-            ID: {currentUser.id}
+            ID: {userId}
          </div>
-         
+
+         {isActivityLoading ? (
+           <div className="flex flex-col items-center justify-center py-12 w-full text-gray-400">
+             <Loader2 className="w-8 h-8 animate-spin mb-2" />
+             <span className="text-sm">Loading your stats...</span>
+           </div>
+         ) : (
+           <>
          <div className="grid grid-cols-2 gap-4 w-full mt-2">
             <div className="bg-gray-50 rounded-2xl p-4 text-center">
               <div className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">Total Score</div>
-              <div className="text-3xl font-black text-indigo-600">{currentUser.score}</div>
+              <div className="text-3xl font-black text-indigo-600">{totalScore}</div>
             </div>
             <div className="bg-gray-50 rounded-2xl p-4 text-center">
               <div className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1">Played</div>
-              <div className="text-3xl font-black text-gray-900">{currentUser.matchesPredicted}</div>
+              <div className="text-3xl font-black text-gray-900">{matchesPredicted}</div>
             </div>
          </div>
-         
-         {/* Rank Tier Progress */}
+
          <div className={`w-full mt-6 rounded-2xl p-5 border border-gray-100 ${currentTier.bg}`}>
             <div className="flex justify-between items-end mb-2">
                <div>
                   <div className="text-[10px] items-center font-bold text-gray-500 uppercase tracking-widest mb-1 flex gap-1">
                      <Target className="w-3 h-3" /> Current Rank
                   </div>
-                  <div className={`text-xl font-black tracking-tight flex items-center gap-2 ${currentTier.text}`}>
-                     {currentTier.name} 
+                  <div className="text-xl font-black tracking-tight flex items-center gap-2 text-indigo-700">
+                     {leaderboardRank !== null ? (
+                       <>#{leaderboardRank}{totalPlayers > 0 && <span className="text-sm font-semibold text-gray-500">of {totalPlayers}</span>}</>
+                     ) : (
+                       <span className="text-sm font-semibold text-gray-500">Not ranked yet</span>
+                     )}
                   </div>
+                  <div className={`text-xs font-bold mt-1 ${currentTier.text}`}>{currentTier.name} Tier</div>
                </div>
                {nextTier ? (
                   <div className="text-right">
                      <div className="text-xs text-gray-600 font-medium bg-white/60 px-2 py-1 rounded-lg inline-block">
-                        <span className="font-bold text-gray-900">{nextTier.min - currentUser.score}</span> pts to {nextTier.name}
+                        <span className="font-bold text-gray-900">{Math.max(0, nextTier.min - totalScore)}</span> pts to {nextTier.name}
                      </div>
                   </div>
                ) : (
@@ -371,9 +343,9 @@ export function ProfileScreen() {
                   </div>
                )}
             </div>
-            
+
             <div className="h-3 w-full bg-white/50 rounded-full overflow-hidden mt-3 shadow-inner">
-               <div 
+               <div
                  className={`h-full bg-gradient-to-r ${currentTier.color} rounded-full transition-all duration-1000 ease-out relative`}
                  style={{ width: `${Math.max(5, progress)}%` }}
                >
@@ -381,50 +353,42 @@ export function ProfileScreen() {
                </div>
             </div>
          </div>
-      </div>
-
-      <div className="mb-8">
-        <h3 className="font-bold text-gray-900 mb-4 px-1 flex items-center gap-2">
-           <Award className="w-5 h-5 text-indigo-600" />
-           Achievements & Badges
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-           {currentUser.badges?.map(badge => (
-              <div key={badge.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 flex flex-row items-center gap-4">
-                 <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center text-2xl shrink-0">
-                    {badge.icon}
-                 </div>
-                 <div>
-                    <h4 className="font-bold text-gray-900 text-sm">{badge.name}</h4>
-                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">{badge.description}</p>
-                 </div>
-              </div>
-           ))}
-        </div>
+           </>
+         )}
       </div>
 
       <div>
         <h3 className="font-bold text-gray-900 mb-4 px-1">Scoring History <span className="text-xs font-normal text-gray-500">(ইতিহাস)</span></h3>
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 h-[250px] pt-6 pr-6">
+          {isActivityLoading ? (
+            <div className="h-full flex items-center justify-center text-gray-400">
+              <Loader2 className="w-6 h-6 animate-spin" />
+            </div>
+          ) : chartData.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-sm text-gray-400 text-center px-4">
+              No scored predictions yet. Your score timeline will appear here after match results are in.
+            </div>
+          ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data}>
+            <LineChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
               <XAxis dataKey="match" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} dy={10} />
               <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} dx={-10} />
-              <Tooltip 
+              <Tooltip
                 contentStyle={{ borderRadius: '12px', border: '1px solid #f3f4f6', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                 labelStyle={{ fontWeight: 'bold', color: '#111827', marginBottom: '4px' }}
               />
-              <Line 
-                type="linear" 
-                dataKey="points" 
-                stroke="#4f46e5" 
+              <Line
+                type="linear"
+                dataKey="points"
+                stroke="#4f46e5"
                 strokeWidth={3}
                 dot={{ r: 4, strokeWidth: 2, fill: '#ffffff', stroke: '#4f46e5' }}
                 activeDot={{ r: 6, strokeWidth: 0, fill: '#4f46e5' }}
               />
             </LineChart>
           </ResponsiveContainer>
+          )}
         </div>
       </div>
 
@@ -433,30 +397,53 @@ export function ProfileScreen() {
            <History className="w-5 h-5 text-indigo-600" />
            Past Predictions
         </h3>
+        {isActivityLoading ? (
+          <div className="flex justify-center py-8 text-gray-400">
+            <Loader2 className="w-6 h-6 animate-spin" />
+          </div>
+        ) : pastPredictions.length === 0 ? (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center text-sm text-gray-400">
+            No predictions yet. Head to Matches to make your first pick.
+          </div>
+        ) : (
         <div className="space-y-4">
-           {pastPredictions.map(pred => (
-              <div key={pred.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+           {pastPredictions.map(pred => {
+              const isPending = pred.isCorrect === null;
+              const isCorrect = pred.isCorrect === true;
+              const statusClass = isPending
+                ? 'bg-amber-50 text-amber-600 border border-amber-100'
+                : isCorrect
+                  ? 'bg-green-50 text-green-600 border border-green-100'
+                  : 'bg-red-50 text-red-600 border border-red-100';
+              const statusLabel = isPending
+                ? 'Pending'
+                : isCorrect
+                  ? `+${pred.pointsEarned} Ptn • Correct`
+                  : `${pred.pointsEarned} Ptn • Incorrect`;
+
+              return (
+              <div key={pred.matchId} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
                  <div className="flex justify-between items-center text-xs text-gray-500 font-medium mb-4 pb-3 border-b border-gray-50">
                     <span>{pred.matchDate}</span>
-                    <span className={`px-2 py-1 rounded-full font-bold text-[10px] uppercase tracking-wider ${pred.isCorrect ? 'bg-green-50 text-green-600 border border-green-100' : 'bg-red-50 text-red-600 border border-red-100'}`}>
-                       {pred.isCorrect ? `+${pred.pointsEarned} Ptn` : '0 Ptn'} • {pred.isCorrect ? 'Correct' : 'Incorrect'}
+                    <span className={`px-2 py-1 rounded-full font-bold text-[10px] uppercase tracking-wider ${statusClass}`}>
+                       {statusLabel}
                     </span>
                  </div>
-                 
+
                  <div className="flex items-center justify-between mb-4">
                     <div className="flex flex-col items-center w-5/12">
-                      <span className="text-3xl mb-1">{pred.teamA.flag}</span>
-                      <span className="font-bold text-center text-xs text-gray-900">{pred.teamA.name}</span>
+                      <span className="text-3xl mb-1">{pred.team1Flag}</span>
+                      <span className="font-bold text-center text-xs text-gray-900">{pred.team1Name}</span>
                     </div>
                     <div className="w-2/12 text-center flex flex-col items-center">
                       <div className="text-[10px] text-gray-400 font-bold bg-gray-50 px-2 py-1 rounded w-full">VS</div>
                     </div>
                     <div className="flex flex-col items-center w-5/12">
-                      <span className="text-3xl mb-1">{pred.teamB.flag}</span>
-                      <span className="font-bold text-center text-xs text-gray-900">{pred.teamB.name}</span>
+                      <span className="text-3xl mb-1">{pred.team2Flag}</span>
+                      <span className="font-bold text-center text-xs text-gray-900">{pred.team2Name}</span>
                     </div>
                  </div>
-                 
+
                  <div className="text-xs bg-gray-50 rounded-xl p-3 flex justify-between items-center border border-gray-100">
                     <div className="flex flex-col">
                       <span className="text-gray-400 font-bold uppercase tracking-wider text-[10px] mb-0.5">Your Prediction</span>
@@ -465,12 +452,16 @@ export function ProfileScreen() {
                     <div className="w-px h-6 bg-gray-200 mx-2"></div>
                     <div className="flex flex-col items-end">
                       <span className="text-gray-400 font-bold uppercase tracking-wider text-[10px] mb-0.5">Match Result</span>
-                      <span className={`font-bold ${pred.isCorrect ? 'text-green-600' : 'text-red-500'}`}>{pred.actual}</span>
+                      <span className={`font-bold ${isPending ? 'text-gray-500' : isCorrect ? 'text-green-600' : 'text-red-500'}`}>
+                        {pred.actual ?? 'Pending'}
+                      </span>
                     </div>
                  </div>
               </div>
-           ))}
+              );
+           })}
         </div>
+        )}
       </div>
             </>
             )}
@@ -581,24 +572,13 @@ export function ProfileScreen() {
               )}
            </div>
            
-           <div className="grid grid-cols-1 gap-3">
-              <div className="bg-indigo-50/50 rounded-2xl p-4 flex gap-3 items-start">
-                 <div className="bg-white p-2 rounded-lg skeleton-shadow">
-                    <Target className="w-5 h-5 text-indigo-500" />
-                 </div>
-                 <div>
-                    <h4 className="font-bold text-gray-900 text-sm">Verified Badge</h4>
-                    <p className="text-xs text-gray-500 mt-1">Get the verified sports predictor tick next to your username.</p>
-                 </div>
+           <div className="bg-indigo-50/50 rounded-2xl p-4 flex gap-3 items-start">
+              <div className="bg-white p-2 rounded-lg skeleton-shadow">
+                 <History className="w-5 h-5 text-indigo-500" />
               </div>
-              <div className="bg-indigo-50/50 rounded-2xl p-4 flex gap-3 items-start">
-                 <div className="bg-white p-2 rounded-lg skeleton-shadow">
-                    <History className="w-5 h-5 text-indigo-500" />
-                 </div>
-                 <div>
-                    <h4 className="font-bold text-gray-900 text-sm">Season History</h4>
-                    <p className="text-xs text-gray-500 mt-1">Permanent access to your past season predictions.</p>
-                 </div>
+              <div>
+                 <h4 className="font-bold text-gray-900 text-sm">Season History</h4>
+                 <p className="text-xs text-gray-500 mt-1">Permanent access to your past season predictions.</p>
               </div>
            </div>
         </div>

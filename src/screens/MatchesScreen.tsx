@@ -430,7 +430,7 @@ export function MatchesScreen({
              onClick={() => setActiveTab(t as any)}
              className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap capitalize transition-colors ${activeTab === t ? 'bg-indigo-900 text-white' : 'bg-gray-100 text-gray-600'}`}
            >
-             {t === 'fixtures' ? 'Fixtures (ফিক্সচার)' : t === 'groups' ? 'Groups' : t === 'points' ? 'Points Table' : 'Favorites'}
+             {t === 'fixtures' ? 'Fixtures' : t === 'groups' ? 'Groups' : t === 'points' ? 'Points Table' : 'Favorites'}
            </button>
         ))}
       </div>

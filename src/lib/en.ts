@@ -43,7 +43,6 @@ export default {
     why_create_desc: 'Connect your Google account to unlock subscriber perks, save your progress seamlessly, and appear on the global, verified leaderboard.',
     recent_activity: 'Recent Activity',
     support: 'Support & Info',
-    achievements: 'Achievements',
     how_to_play: 'How to Play',
     rules: 'Rules & Scoring',
     contact: 'Contact Support',

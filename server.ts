@@ -18,6 +18,7 @@ import {
   saveUserPredictionAdmin,
   scorePredictionsForMatch,
 } from "./predictionScoringService";
+import { getUserProfileActivity } from "./userProfileActivityService";
 import { canSubmitPrediction } from "./src/lib/predictionUtils";
 import { getUserProfile, upsertUserProfile } from "./userProfileService";
 import type { MatchData } from "./src/types";
@@ -157,6 +158,26 @@ app.post("/api/refresh", async (_req, res) => {
   } catch (err) {
     console.error("[WorldCup] refresh error:", err);
     res.status(500).json({ error: "Failed to refresh data." });
+  }
+});
+
+app.get("/api/profile/activity", async (req, res) => {
+  const idToken = getBearerToken(req.headers.authorization);
+  if (!idToken) {
+    return res.status(401).json({ error: "Missing authorization token." });
+  }
+
+  const verified = await verifyIdToken(idToken);
+  if (!verified) {
+    return res.status(401).json({ error: "Invalid or expired sign-in token." });
+  }
+
+  try {
+    const activity = await getUserProfileActivity(verified.uid);
+    res.json(activity);
+  } catch (err) {
+    console.error("[Profile] activity error:", err);
+    res.status(500).json({ error: "Failed to load profile activity." });
   }
 });
 
