@@ -1,0 +1,1002 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { GroupInfo, GroupStanding, MatchData, TeamInfo } from '../types';
+import { format } from 'date-fns';
+import { Bot, ChevronLeft, MapPin, RefreshCw, Globe, Share2, Search, Star, AlertCircle } from 'lucide-react';
+import { MatchTeamsDisplay, TeamFlag } from '../components/MatchTeamsDisplay';
+import {
+  applyMatchStatus,
+  canShowPredictCta,
+  formatMatchDateHeader,
+  getMatchDateKey,
+  getTodayDateKey,
+  isDateToday,
+  isMatchToday,
+  withComputedMatchStatuses,
+} from '../lib/matchUtils';
+
+function resolveTeam(
+  teams: TeamInfo[],
+  teamId?: string,
+  fallbackName?: string
+): TeamInfo {
+  const id = teamId || fallbackName || 'TBD';
+  const name = fallbackName || teamId || 'TBD';
+  return (
+    teams.find((t) => t.id === teamId) ??
+    teams.find((t) => t.name.toLowerCase() === name.toLowerCase()) ?? {
+      id,
+      name,
+      flag: '🏳️',
+      rank: 0,
+      introBench: '',
+      introBn: '',
+      history: '',
+      historyBn: '',
+      players: [],
+    }
+  );
+}
+
+function formatGroupLabel(match: MatchData): string {
+  const group = match.group ?? '';
+  if (/^[A-L]$/.test(group)) return `Group ${group}`;
+  return match.round ?? (group || 'TBD');
+}
+
+function sortMatchesByDate(matchList: MatchData[]): MatchData[] {
+  return [...matchList].sort(
+    (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()
+  );
+}
+
+function groupMatchesByDate(matchList: MatchData[]): [string, MatchData[]][] {
+  const byDate = new Map<string, MatchData[]>();
+  for (const match of sortMatchesByDate(matchList)) {
+    const key = getMatchDateKey(match);
+    if (!byDate.has(key)) byDate.set(key, []);
+    byDate.get(key)!.push(match);
+  }
+  return Array.from(byDate.entries());
+}
+
+function matchesSearchFilter(match: MatchData, teams: TeamInfo[], query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+
+  const teamA = resolveTeam(teams, match.teamA, match.teamAName);
+  const teamB = resolveTeam(teams, match.teamB, match.teamBName);
+  const haystack = [
+    teamA.name,
+    teamB.name,
+    match.group,
+    `group ${match.group}`,
+    match.venue,
+    match.status,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return haystack.includes(q);
+}
+
+export function MatchesScreen({
+  initialMatchId = null,
+  onInitialMatchHandled,
+}: {
+  initialMatchId?: string | null;
+  onInitialMatchHandled?: () => void;
+} = {}) {
+  const [activeTab, setActiveTab] = useState<'fixtures' | 'groups' | 'points' | 'favorites'>('fixtures');
+  const [selectedMatch, setSelectedMatch] = useState<MatchData | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const [matches, setMatches] = useState<MatchData[]>([]);
+  const [teams, setTeams] = useState<TeamInfo[]>([]);
+  const [groups, setGroups] = useState<GroupInfo[]>([]);
+  const [standings, setStandings] = useState<GroupStanding[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [favoriteTeams, setFavoriteTeams] = useState<string[]>(() => {
+    const saved = localStorage.getItem('autoconFavoriteTeams');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const [matchesRes, teamsRes, groupsRes, standingsRes] = await Promise.all([
+        fetch('/api/matches'),
+        fetch('/api/teams'),
+        fetch('/api/groups'),
+        fetch('/api/standings'),
+      ]);
+
+      const errors: string[] = [];
+      const parse = async (res: Response, label: string) => {
+        const data = await res.json();
+        if (!res.ok) {
+          errors.push(data.error || `Failed to load ${label}`);
+          return null;
+        }
+        return data;
+      };
+
+      const [mData, tData, gData, sData] = await Promise.all([
+        parse(matchesRes, 'matches'),
+        parse(teamsRes, 'teams'),
+        parse(groupsRes, 'groups'),
+        parse(standingsRes, 'standings'),
+      ]);
+
+      if (errors.length) {
+        setLoadError(errors.join(' '));
+      }
+
+      if (Array.isArray(mData)) setMatches(mData);
+      if (Array.isArray(tData)) setTeams(tData);
+      if (Array.isArray(gData)) setGroups(gData);
+      if (Array.isArray(sData)) setStandings(sData);
+    } catch (e) {
+      console.error(e);
+      setLoadError('Network error. Could not load match data.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick((n) => n + 1), 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const liveMatches = useMemo(() => {
+    void tick;
+    return withComputedMatchStatuses(matches);
+  }, [matches, tick]);
+
+  const todayDateKey = useMemo(() => {
+    void tick;
+    return getTodayDateKey();
+  }, [tick]);
+
+  const matchesDataKey = useMemo(
+    () => matches.map((m) => `${m.id}:${m.scoreA}:${m.scoreB}:${m.time}`).join('|'),
+    [matches]
+  );
+
+  const filteredMatches = useMemo(
+    () => liveMatches.filter((match) => matchesSearchFilter(match, teams, searchQuery)),
+    [liveMatches, teams, searchQuery]
+  );
+
+  const hasTodaySection = useMemo(
+    () => filteredMatches.some((match) => isMatchToday(match)),
+    [filteredMatches, todayDateKey]
+  );
+
+  const scrollToTodaySection = useCallback(() => {
+    const el = document.getElementById('matches-section-today');
+    if (!el) return false;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.focus({ preventScroll: true });
+    return true;
+  }, []);
+
+  const pendingScrollRef = useRef(false);
+
+  useEffect(() => {
+    if (!isLoading) {
+      pendingScrollRef.current = true;
+    }
+  }, [matchesDataKey, isLoading]);
+
+  useEffect(() => {
+    if (
+      !pendingScrollRef.current ||
+      isLoading ||
+      activeTab !== 'fixtures' ||
+      initialMatchId ||
+      selectedMatch ||
+      !hasTodaySection
+    ) {
+      return;
+    }
+
+    let timeout: ReturnType<typeof setTimeout>;
+    const attemptScroll = () => {
+      if (scrollToTodaySection()) {
+        pendingScrollRef.current = false;
+        return true;
+      }
+      return false;
+    };
+
+    const frame = requestAnimationFrame(() => {
+      if (!attemptScroll()) {
+        timeout = setTimeout(attemptScroll, 100);
+      }
+    });
+
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timeout);
+    };
+  }, [
+    isLoading,
+    activeTab,
+    initialMatchId,
+    selectedMatch,
+    hasTodaySection,
+    matchesDataKey,
+    scrollToTodaySection,
+  ]);
+
+  useEffect(() => {
+    if (!initialMatchId || liveMatches.length === 0) return;
+    const match = liveMatches.find((m) => m.id === initialMatchId);
+    if (match) {
+      setSelectedMatch(match);
+      setActiveTab('fixtures');
+      onInitialMatchHandled?.();
+    }
+  }, [initialMatchId, liveMatches, onInitialMatchHandled]);
+
+  const getTeam = (id: string, fallbackName?: string) => resolveTeam(teams, id, fallbackName);
+
+  const favoriteTeamMatches = liveMatches.filter((match) => {
+    if (!favoriteTeams.length) return false;
+    return favoriteTeams.includes(match.teamA) || favoriteTeams.includes(match.teamB);
+  });
+
+  const filteredGroups = groups
+    .map((group) => ({
+      ...group,
+      teams: group.teams.filter((team) => {
+        if (!searchQuery.trim()) return true;
+        const q = searchQuery.trim().toLowerCase();
+        return (
+          team.name.toLowerCase().includes(q) ||
+          `group ${group.name}`.toLowerCase().includes(q)
+        );
+      }),
+    }))
+    .filter((group) => group.teams.length > 0 || `group ${group.name}`.toLowerCase().includes(searchQuery.trim().toLowerCase()));
+
+  const toggleFavoriteTeam = (e: React.MouseEvent, teamId: string) => {
+    e.stopPropagation();
+    const updated = favoriteTeams.includes(teamId)
+      ? favoriteTeams.filter((id) => id !== teamId)
+      : [...favoriteTeams, teamId];
+    setFavoriteTeams(updated);
+    localStorage.setItem('autoconFavoriteTeams', JSON.stringify(updated));
+  };
+
+  const handleMatchUpdate = (updated: MatchData) => {
+    const withStatus = applyMatchStatus(updated);
+    setMatches((prev) => prev.map((m) => (m.id === withStatus.id ? withStatus : m)));
+    setSelectedMatch(withStatus);
+    loadData();
+  };
+
+  if (selectedMatch) {
+    return (
+      <MatchDetails
+        match={selectedMatch}
+        teams={teams}
+        favoriteTeams={favoriteTeams}
+        onToggleFavoriteTeam={toggleFavoriteTeam}
+        onMatchUpdate={handleMatchUpdate}
+        onBack={() => setSelectedMatch(null)}
+      />
+    );
+  }
+
+  const renderMatchCard = (match: MatchData, inTodaySection = false) => {
+    const teamA = resolveTeam(teams, match.teamA, match.teamAName);
+    const teamB = resolveTeam(teams, match.teamB, match.teamBName);
+    const showPredictCta = canShowPredictCta(match);
+    const isLive = match.status === 'live';
+    const isToday = inTodaySection || isMatchToday(match);
+
+    return (
+      <div
+        key={match.id}
+        onClick={() => setSelectedMatch(match)}
+        className={`text-left shadow-sm rounded-2xl p-4 active:scale-95 transition-transform cursor-pointer relative border ${
+          isToday
+            ? 'bg-white border-indigo-200 ring-1 ring-indigo-100/80'
+            : 'bg-white border-gray-100'
+        }`}
+      >
+        <div className="flex justify-between items-center text-xs text-gray-500 font-medium mb-3">
+          <span className="font-semibold text-indigo-700">
+            {format(new Date(match.time), 'h:mm a')}
+          </span>
+          <span className="flex items-center gap-1">
+            <MapPin className="w-3 h-3" />
+            {formatGroupLabel(match)}
+            {match.venue ? ` · ${match.venue}` : ''}
+          </span>
+        </div>
+
+        <MatchTeamsDisplay
+          teamA={teamA}
+          teamB={teamB}
+          match={match}
+          teamAAccessory={
+            <button
+              type="button"
+              onClick={(e) => toggleFavoriteTeam(e, teamA.id)}
+              className="absolute -top-1 -right-1 p-1 text-gray-300 hover:text-amber-400 z-10"
+              aria-label={`Favorite ${teamA.name}`}
+            >
+              <Star className={`w-4 h-4 ${favoriteTeams.includes(teamA.id) ? 'fill-amber-400 text-amber-400' : ''}`} />
+            </button>
+          }
+          teamBAccessory={
+            <button
+              type="button"
+              onClick={(e) => toggleFavoriteTeam(e, teamB.id)}
+              className="absolute -top-1 -right-1 p-1 text-gray-300 hover:text-amber-400 z-10"
+              aria-label={`Favorite ${teamB.name}`}
+            >
+              <Star className={`w-4 h-4 ${favoriteTeams.includes(teamB.id) ? 'fill-amber-400 text-amber-400' : ''}`} />
+            </button>
+          }
+        />
+
+          {showPredictCta && (
+             <div className="mt-4 pt-4 border-t border-gray-50 text-center text-sm font-medium text-indigo-600">
+                Tap to Predict & Read Preview
+             </div>
+          )}
+          {isLive && (
+             <div className="mt-4 pt-4 border-t border-gray-50 text-center text-sm font-medium text-gray-500">
+                Match in progress — tap for details
+             </div>
+          )}
+      </div>
+    );
+  };
+
+  const renderMatchListByDate = (matchList: MatchData[]) => {
+    if (matchList.length === 0) {
+      const emptyMsg = activeTab === 'favorites'
+        ? 'No matches for your favorite teams yet. Star teams from match cards or the Teams screen.'
+        : `No matches found matching "${searchQuery}"`;
+      return (
+        <div className="text-center py-8 text-gray-500 text-sm bg-gray-50 rounded-2xl border border-gray-100">
+          {emptyMsg}
+        </div>
+      );
+    }
+
+    return groupMatchesByDate(matchList).map(([dateKey, dayMatches]) => {
+      const isTodaySection = isDateToday(dateKey);
+      const liveCount = dayMatches.filter((m) => m.status === 'live').length;
+
+      return (
+        <section
+          key={dateKey}
+          id={isTodaySection ? 'matches-section-today' : undefined}
+          tabIndex={isTodaySection ? 0 : undefined}
+          aria-label={isTodaySection ? "Today's matches" : formatMatchDateHeader(dateKey)}
+          className={`space-y-3 scroll-mt-3 outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 rounded-2xl ${
+            isTodaySection
+              ? 'bg-indigo-50/60 border border-indigo-100 p-3 -mx-1 shadow-sm'
+              : ''
+          }`}
+        >
+          <div
+            className={`sticky top-0 z-10 backdrop-blur-sm py-2 px-1 -mx-1 ${
+              isTodaySection ? 'bg-indigo-50/95' : 'bg-gray-50/95'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm font-bold text-gray-900">{formatMatchDateHeader(dateKey)}</h3>
+                  {isTodaySection && (
+                    <span className="text-[10px] font-bold uppercase tracking-wide bg-indigo-600 text-white px-2 py-0.5 rounded-full">
+                      Today
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500">
+                  {dayMatches.length} match{dayMatches.length !== 1 ? 'es' : ''}
+                </p>
+              </div>
+              {isTodaySection && (
+                <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-100 px-2 py-1 rounded-lg shrink-0">
+                  {liveCount > 0 ? `${liveCount} live` : 'Scheduled'}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="space-y-3">
+            {dayMatches.map((match) => renderMatchCard(match, isTodaySection))}
+          </div>
+        </section>
+      );
+    });
+  };
+
+  return (
+    <div className="pb-24 pt-6 flex flex-col h-screen overflow-hidden">
+      {/* <div className="px-4 mb-4 shrink-0 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Matches</h1>
+          <p className="text-gray-500 text-sm mt-1">Upcoming Match Schedule & Results</p>
+          <p className="text-gray-400 text-xs mt-0.5">আসন্ন খেলার সময়সূচী ও ফলাফল</p>
+        </div>
+        <button
+          onClick={loadData}
+          disabled={isLoading}
+          className="p-2 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-100 disabled:opacity-50"
+          aria-label="Refresh matches"
+        >
+          <RefreshCw className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} />
+        </button>
+      </div> */}
+
+      <div className="px-4 mb-4 shrink-0">
+        <div className="relative">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <Search className="h-4 w-4 text-gray-400" />
+          </div>
+          <input
+            type="text"
+            placeholder="Search teams or groups..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-xl leading-5 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm sm:text-sm"
+          />
+        </div>
+      </div>
+
+      <div className="flex px-4 gap-2 mb-4 shrink-0 overflow-x-auto hide-scrollbar">
+        {['fixtures', 'groups', 'points', 'favorites'].map((t) => (
+           <button 
+             key={t}
+             onClick={() => setActiveTab(t as any)}
+             className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap capitalize transition-colors ${activeTab === t ? 'bg-indigo-900 text-white' : 'bg-gray-100 text-gray-600'}`}
+           >
+             {t === 'fixtures' ? 'Fixtures (ফিক্সচার)' : t === 'groups' ? 'Groups' : t === 'points' ? 'Points Table' : 'Favorites'}
+           </button>
+        ))}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 pb-20">
+        {loadError && (
+          <div className="mb-4 flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+            <div>
+              <p>{loadError}</p>
+              <button onClick={loadData} className="text-indigo-600 font-medium text-xs mt-1 hover:underline">
+                Try again
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isLoading && matches.length === 0 ? (
+          <div className="text-center py-12 text-gray-500 text-sm animate-pulse">
+            Loading World Cup fixtures and results...
+          </div>
+        ) : (
+          <>
+            {activeTab === 'fixtures' && (
+              <div className="space-y-6">
+                {renderMatchListByDate(filteredMatches)}
+              </div>
+            )}
+
+            {activeTab === 'favorites' && (
+              <div className="space-y-6">
+                {favoriteTeams.length > 0 && (
+                  <div className="bg-white border rounded-xl p-4 shadow-sm">
+                    <h3 className="font-bold text-gray-800 text-sm mb-3">Favorite Teams</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {favoriteTeams.map((teamId) => {
+                        const team = resolveTeam(teams, teamId);
+                        return (
+                          <button
+                            key={teamId}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFavoriteTeam(e, teamId);
+                            }}
+                            className="inline-flex items-center gap-2 bg-amber-50 border border-amber-100 text-amber-800 px-3 py-1.5 rounded-full text-xs font-semibold"
+                          >
+                            <TeamFlag team={team} size="sm" />
+                            {team.name}
+                            <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {renderMatchListByDate(
+                  favoriteTeamMatches.filter((m) => matchesSearchFilter(m, teams, searchQuery))
+                )}
+              </div>
+            )}
+
+            {activeTab === 'points' && (
+              <GroupPointTable teams={teams} standings={standings} isLoading={isLoading} />
+            )}
+
+            {activeTab === 'groups' && (
+              <div className="space-y-4">
+                {filteredGroups.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500 text-sm bg-gray-50 rounded-2xl border border-gray-100">
+                    {searchQuery
+                      ? `No groups or teams found matching "${searchQuery}"`
+                      : 'No group data available from the API yet.'}
+                  </div>
+                ) : (
+                  filteredGroups.map((group) => (
+                    <div key={group.name} className="bg-white border rounded-xl p-6 shadow-sm">
+                      <h3 className="font-bold text-gray-800 pb-2 border-b">Group {group.name}</h3>
+                      <ul className="text-left mt-4 space-y-3 text-sm font-medium">
+                        {group.teams.map((team) => (
+                          <li key={team.id} className="flex items-center gap-3">
+                            <TeamFlag team={team} size="sm" />
+                            {team.name}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------
+// Match Details Component Inside Same File
+// ---------------------------------------------
+function MatchDetails({
+  match,
+  teams,
+  favoriteTeams,
+  onToggleFavoriteTeam,
+  onMatchUpdate,
+  onBack,
+}: {
+  match: MatchData;
+  teams: TeamInfo[];
+  favoriteTeams: string[];
+  onToggleFavoriteTeam: (e: React.MouseEvent, teamId: string) => void;
+  onMatchUpdate: (match: MatchData) => void;
+  onBack: () => void;
+}) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick((n) => n + 1), 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const liveMatch = useMemo(() => applyMatchStatus(match), [match, tick]);
+  const teamA = resolveTeam(teams, liveMatch.teamA, liveMatch.teamAName);
+  const teamB = resolveTeam(teams, liveMatch.teamB, liveMatch.teamBName);
+
+  const [prediction, setPrediction] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [resultLoading, setResultLoading] = useState(false);
+  const [resultError, setResultError] = useState<string | null>(null);
+  const [aiContent, setAiContent] = useState<string | null>(null);
+  const [aiSource, setAiSource] = useState<'gemini' | 'mock' | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const fetchMatchResult = async () => {
+    setResultLoading(true);
+    setResultError(null);
+    try {
+      const res = await fetch('/api/gemini/match-result', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ matchId: match.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setResultError(data.error || 'Failed to fetch match result.');
+        return;
+      }
+      if (data.match) {
+        onMatchUpdate(data.match);
+      }
+    } catch (e) {
+      console.error(e);
+      setResultError('Network error while fetching match result.');
+    } finally {
+      setResultLoading(false);
+    }
+  };
+
+  const fetchAiAnalysis = async (type: 'pre' | 'post') => {
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const res = await fetch('/api/gemini/analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ matchId: match.id, type })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAiError(data.error || 'Failed to generate analysis.');
+        setAiContent(null);
+        setAiSource(null);
+        return;
+      }
+      setAiContent(data.analysis);
+      setAiSource(data.source ?? null);
+      if (data.source === 'mock' && data.error) {
+        setAiError(`Using demo content: ${data.error}`);
+      }
+    } catch (e) {
+      console.error(e);
+      setAiError('Network error. Could not reach the analysis service.');
+      setAiContent(null);
+      setAiSource(null);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const submitPrediction = async (choice: string) => {
+    setPrediction(choice);
+    await fetch('/api/predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: 'AUTOCON-1001', matchId: match.id, choice }) // mock userId
+    });
+    alert('Prediction submitted successfully! (প্রেডিকশন সফলভাবে জমা হয়েছে)');
+  };
+
+  const handleShareMatch = async () => {
+    let text = `Check out the match: ${teamA?.name} vs ${teamB?.name} at the Sports SUST Prediction Challenge 26!`;
+    if (liveMatch.status === 'completed') {
+        text = `Match Finished: ${teamA?.name} ${liveMatch.scoreA} - ${liveMatch.scoreB} ${teamB?.name}. Check the AI Analysis on Sports SUST Prediction Challenge 26!`;
+    } else if (prediction) {
+        const choiceName = prediction === 'draw' ? 'a Draw' : prediction === 'teamA' ? teamA?.name : teamB?.name;
+        text = `I predicted ${choiceName} for the ${teamA?.name} vs ${teamB?.name} match! Join me in the Prediction Challenge 26!`;
+    }
+    
+    if (navigator.share) {
+        try {
+            await navigator.share({
+                title: `${teamA?.name} vs ${teamB?.name} - World Cup 2026`,
+                text: text,
+                url: window.location.href,
+            });
+        } catch (err) {
+             console.error('Share failed:', err);
+        }
+    } else {
+        await navigator.clipboard.writeText(text + " " + window.location.href);
+        alert('Match info copied to clipboard!');
+    }
+  };
+
+  return (
+    <div className="bg-gray-50 min-h-screen pb-24 h-[100vh] overflow-y-auto w-full absolute top-0 left-0 z-10">
+      <div className="bg-white px-4 py-4 sticky top-0 border-b border-gray-100 flex items-center justify-between z-20">
+        <div className="flex items-center">
+          <button onClick={onBack} className="p-2 -ml-2 hover:bg-gray-50 rounded-full">
+             <ChevronLeft className="w-6 h-6 text-gray-700" />
+          </button>
+          <span className="font-semibold text-lg ml-2 text-gray-900">Match Details</span>
+        </div>
+        <button onClick={handleShareMatch} className="p-2 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-100 active:scale-95 transition-all shadow-sm border border-indigo-100">
+           <Share2 className="w-5 h-5" />
+        </button>
+      </div>
+
+      <div className="p-4 space-y-6">
+        {/* Scorecard */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+          <MatchTeamsDisplay
+            teamA={teamA}
+            teamB={teamB}
+            match={liveMatch}
+            size="lg"
+            teamAAccessory={
+              <button onClick={(e) => onToggleFavoriteTeam(e, teamA.id)} className="text-gray-300 hover:text-amber-400">
+                <Star className={`w-5 h-5 ${favoriteTeams.includes(teamA.id) ? 'fill-amber-400 text-amber-400' : ''}`} />
+              </button>
+            }
+            teamBAccessory={
+              <button onClick={(e) => onToggleFavoriteTeam(e, teamB.id)} className="text-gray-300 hover:text-amber-400">
+                <Star className={`w-5 h-5 ${favoriteTeams.includes(teamB.id) ? 'fill-amber-400 text-amber-400' : ''}`} />
+              </button>
+            }
+          />
+          {match.venue && (
+            <p className="text-xs text-gray-500 text-center mt-4">{match.venue}</p>
+          )}
+          {liveMatch.status !== 'completed' && (
+            <button
+              onClick={fetchMatchResult}
+              disabled={resultLoading}
+              className="mt-4 w-full bg-emerald-50 text-emerald-700 font-semibold py-2.5 rounded-xl hover:bg-emerald-100 text-sm"
+            >
+              {resultLoading ? 'Fetching result from Gemini...' : 'Fetch Result via Gemini'}
+            </button>
+          )}
+          {resultError && (
+            <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              {resultError}
+            </p>
+          )}
+        </div>
+
+        {/* Prediction Builder - only before kickoff */}
+        {liveMatch.status === 'upcoming' && (
+          <div className="bg-white rounded-2xl p-5 border border-indigo-100 shadow-lg shadow-indigo-100/50">
+             <h3 className="font-bold text-gray-900 mb-1">Make your Prediction</h3>
+             <p className="text-xs text-gray-500 mb-4 font-medium">সঠিক উত্তরের জন্য +১০ পয়েন্ট, ভুলের জন্য -৫ (Submit early!)</p>
+             
+             <div className="grid grid-cols-3 gap-2">
+               <PredictOption 
+                 label={teamA?.name!} 
+                 active={prediction === 'teamA'} 
+                 onClick={() => submitPrediction('teamA')}
+               />
+               <PredictOption 
+                 label="Draw" 
+                 active={prediction === 'draw'} 
+                 onClick={() => submitPrediction('draw')}
+               />
+               <PredictOption 
+                 label={teamB?.name!} 
+                 active={prediction === 'teamB'} 
+                 onClick={() => submitPrediction('teamB')}
+               />
+             </div>
+          </div>
+        )}
+
+        {/* AI Analysis Tab */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mt-6">
+          <div className="flex items-center gap-2 mb-4 text-indigo-700">
+             <Bot className="w-5 h-5" />
+             <h3 className="font-bold text-lg">AI Match Analysis</h3>
+          </div>
+          <p className="text-xs text-gray-500 mb-4">Gemini-powered insights. (গভীরে ম্যাচ বিশ্লেষণ গল্পাকারে)</p>
+
+          {aiError && (
+            <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              {aiError}
+            </div>
+          )}
+
+          {aiContent ? (
+            <div className="space-y-2">
+              {aiSource && (
+                <span className={`inline-block text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${
+                  aiSource === 'gemini' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                }`}>
+                  {aiSource === 'gemini' ? 'Powered by Gemini' : 'Demo fallback'}
+                </span>
+              )}
+              <div className="prose prose-sm prose-indigo leading-relaxed prose-p:my-2 bg-indigo-50/50 p-4 rounded-xl text-gray-700">
+                {aiContent}
+              </div>
+              <button
+                onClick={() => fetchAiAnalysis(liveMatch.status === 'upcoming' ? 'pre' : 'post')}
+                disabled={aiLoading}
+                className="text-xs text-indigo-600 font-medium hover:underline"
+              >
+                {aiLoading ? 'Regenerating...' : 'Regenerate analysis'}
+              </button>
+            </div>
+          ) : (
+            <button 
+              onClick={() => fetchAiAnalysis(liveMatch.status === 'upcoming' ? 'pre' : 'post')}
+              disabled={aiLoading}
+              className="w-full bg-indigo-50 text-indigo-700 font-semibold py-3 rounded-xl hover:bg-indigo-100 flex justify-center items-center"
+            >
+              {aiLoading ? 'Generating...' : `Generate ${liveMatch.status === 'upcoming' ? 'Pre' : 'Post'}-Match Analysis`}
+            </button>
+          )}
+        </div>
+        
+      </div>
+    </div>
+  )
+}
+
+function PredictOption({ label, active, onClick }: { label: string, active: boolean, onClick: () => void }) {
+  return (
+    <button 
+       onClick={onClick}
+       className={`py-3 px-2 rounded-xl border text-sm font-semibold transition-all shadow-sm active:scale-95 ${active ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-200'}`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function GroupPointTable({
+  teams,
+  standings,
+  isLoading,
+}: {
+  teams: TeamInfo[];
+  standings: GroupStanding[];
+  isLoading: boolean;
+}) {
+  const [liveUpdate, setLiveUpdate] = useState<string | null>(null);
+  const [urls, setUrls] = useState<string[]>([]);
+  const [isFetching, setIsFetching] = useState(false);
+  const [liveSource, setLiveSource] = useState<'gemini' | 'mock' | null>(null);
+  const [liveError, setLiveError] = useState<string | null>(null);
+
+  const fetchLiveUpdates = async () => {
+    setIsFetching(true);
+    setLiveError(null);
+    try {
+      const res = await fetch('/api/gemini/live-updates', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        setLiveError(data.error || 'Failed to fetch live updates.');
+        return;
+      }
+      setLiveUpdate(data.update ?? null);
+      setUrls(data.urls || []);
+      setLiveSource(data.source ?? null);
+      if (data.source === 'mock' && data.error) {
+        setLiveError(`Using demo content: ${data.error}`);
+      }
+    } catch (e) {
+      console.error(e);
+      setLiveError('Network error. Could not reach the live updates service.');
+    } finally {
+      setIsFetching(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLiveUpdates();
+  }, []);
+
+  const groupedStandings = standings.reduce<Record<string, GroupStanding[]>>((acc, row) => {
+    const key = row.group || 'Overall';
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(row);
+    return acc;
+  }, {});
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2 text-indigo-700">
+             <Globe className="w-5 h-5" />
+             <h3 className="font-bold text-sm">Real-Time Search Updates</h3>
+          </div>
+          <button 
+            onClick={fetchLiveUpdates} 
+            disabled={isFetching}
+            className="p-2 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-100 active:scale-95 transition-all"
+          >
+             <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+        
+        {liveError && (
+          <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+            {liveError}
+          </div>
+        )}
+
+        {isFetching && !liveUpdate ? (
+           <div className="text-sm text-gray-500 animate-pulse text-center py-4">Searching Google for latest updates...</div>
+        ) : (
+           <div className="bg-indigo-50/50 p-3 rounded-xl border border-indigo-50">
+             {liveSource && (
+               <span className={`inline-block mb-2 text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${
+                 liveSource === 'gemini' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+               }`}>
+                 {liveSource === 'gemini' ? 'Powered by Gemini' : 'Demo fallback'}
+               </span>
+             )}
+             <div className="prose prose-sm prose-indigo leading-relaxed prose-p:my-1 text-gray-700 text-xs sm:text-sm">
+                {liveUpdate || 'No live update available at this time.'}
+             </div>
+             {urls.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-indigo-100/50 flex flex-wrap gap-2">
+                  <span className="text-[10px] uppercase font-bold text-gray-400">Sources:</span>
+                  {urls.map((url, i) => (
+                    <a key={i} href={url} target="_blank" rel="noreferrer" className="text-[10px] bg-white border border-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full truncate max-w-[120px]">
+                      {new URL(url).hostname.replace('www.', '')}
+                    </a>
+                  ))}
+                </div>
+             )}
+           </div>
+        )}
+      </div>
+
+      {isLoading && standings.length === 0 ? (
+        <div className="text-center py-8 text-gray-500 text-sm animate-pulse">Loading standings...</div>
+      ) : standings.length === 0 ? (
+        <div className="text-center py-8 text-gray-500 text-sm bg-gray-50 rounded-2xl border border-gray-100">
+          No standings data available from the API yet.
+        </div>
+      ) : (
+        Object.entries(groupedStandings).map(([groupName, rows]) => (
+          <div key={groupName} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="bg-gray-50 px-4 py-3 border-b border-gray-100">
+              <h3 className="font-bold text-gray-900 text-sm">
+                {groupName === 'Overall' ? 'World Cup Standings' : `Group ${groupName}`}
+              </h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="text-xs text-gray-500 bg-white border-b border-gray-50 font-medium uppercase tracking-wider">
+                  <tr>
+                    <th className="px-4 py-3">Team</th>
+                <th className="px-2 py-3 text-center">MP</th>
+                <th className="px-2 py-3 text-center">GF</th>
+                <th className="px-2 py-3 text-center">GD</th>
+                <th className="px-4 py-3 text-center text-indigo-600 font-bold">Pts</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {rows.map((row) => {
+                    const team = teams.find((t) => t.id === row.teamId) ?? {
+                      id: row.teamId,
+                      name: row.teamName,
+                      flag: '🏳️',
+                      badgeUrl: row.badgeUrl,
+                      rank: row.rank,
+                      introBench: '',
+                      introBn: '',
+                      history: '',
+                      historyBn: '',
+                      players: [],
+                    };
+                    return (
+                      <tr key={row.teamId} className="bg-white hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 flex items-center gap-2">
+                          <TeamFlag team={team} size="sm" />
+                          <span className="font-semibold text-gray-900 text-xs sm:text-sm">{team.name}</span>
+                        </td>
+                        <td className="px-2 py-3 text-center text-gray-600 font-medium">{row.mp}</td>
+                        <td className="px-2 py-3 text-center text-gray-600 font-medium">{row.gf}</td>
+                        <td className="px-2 py-3 text-center text-gray-600 font-medium">{row.gd}</td>
+                        <td className="px-4 py-3 text-center font-bold text-indigo-600 text-base">{row.pts}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))
+      )}
+      <p className="text-xs text-center text-gray-400 mt-4 px-4 leading-relaxed">
+        * This section automatically updates via Google Search results after matches conclude. <br />
+        (ম্যাচ শেষে গুগলের সাহায্যে পয়েন্ট টেবিল নিজে থেকেই আপডেট হবে)
+      </p>
+    </div>
+  );
+}

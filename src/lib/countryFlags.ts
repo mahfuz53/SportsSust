@@ -1,0 +1,56 @@
+const COUNTRY_FLAGS: Record<string, string> = {
+  Argentina: "🇦🇷",
+  Australia: "🇦🇺",
+  Austria: "🇦🇹",
+  Belgium: "🇧🇪",
+  Bolivia: "🇧🇴",
+  "Bosnia-Herzegovina": "🇧🇦",
+  Brazil: "🇧🇷",
+  Cameroon: "🇨🇲",
+  Canada: "🇨🇦",
+  Chile: "🇨🇱",
+  China: "🇨🇳",
+  Colombia: "🇨🇴",
+  "Costa Rica": "🇨🇷",
+  Croatia: "🇭🇷",
+  "Czech Republic": "🇨🇿",
+  Denmark: "🇩🇰",
+  Ecuador: "🇪🇨",
+  Egypt: "🇪🇬",
+  England: "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
+  France: "🇫🇷",
+  Germany: "🇩🇪",
+  Ghana: "🇬🇭",
+  Greece: "🇬🇷",
+  Honduras: "🇭🇳",
+  Iran: "🇮🇷",
+  Italy: "🇮🇹",
+  Japan: "🇯🇵",
+  Mexico: "🇲🇽",
+  Morocco: "🇲🇦",
+  Netherlands: "🇳🇱",
+  Nigeria: "🇳🇬",
+  Norway: "🇳🇴",
+  Paraguay: "🇵🇾",
+  Peru: "🇵🇪",
+  Poland: "🇵🇱",
+  Portugal: "🇵🇹",
+  Qatar: "🇶🇦",
+  "South Africa": "🇿🇦",
+  "South Korea": "🇰🇷",
+  Spain: "🇪🇸",
+  Sweden: "🇸🇪",
+  Switzerland: "🇨🇭",
+  Tunisia: "🇹🇳",
+  USA: "🇺🇸",
+  Uruguay: "🇺🇾",
+  Wales: "🏴󠁧󠁢󠁷󠁬󠁳󠁿",
+};
+
+export function getCountryFlag(teamName: string): string {
+  if (COUNTRY_FLAGS[teamName]) return COUNTRY_FLAGS[teamName];
+  const key = Object.keys(COUNTRY_FLAGS).find(
+    (name) => name.toLowerCase() === teamName.toLowerCase()
+  );
+  return key ? COUNTRY_FLAGS[key] : "🏳️";
+}

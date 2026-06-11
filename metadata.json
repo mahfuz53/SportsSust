@@ -1,0 +1,6 @@
+{
+  "name": "Sports SUST Prediction Challenge 26",
+  "description": "FIFA World Cup 2026 prediction challenge platform. Predict matches, earn points, and view AI-powered analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
