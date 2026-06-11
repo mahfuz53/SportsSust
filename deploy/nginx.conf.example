@@ -1,0 +1,35 @@
+# Example Nginx config for https://revere.britailabs.co.uk
+# Static-only hosting is NOT enough — proxy /api/* to the Node.js server.
+
+server {
+    listen 80;
+    server_name revere.britailabs.co.uk;
+
+    # After certbot, use listen 443 ssl; and redirect HTTP → HTTPS
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# On the server, run the app from the project root (not dist/ alone):
+#   cd /var/www/sports-prediction
+#   npm ci --omit=dev
+#   cp .env.production.example .env   # set secrets
+#   npm run start:pm2

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { loadWorldCupMeta } from '../lib/worldCupMeta';
 import { TeamInfo } from '../types';
 import { ChevronRight, ChevronLeft, MapPin, Users2, Award, Star, AlertCircle, RefreshCw } from 'lucide-react';
 
@@ -12,20 +13,15 @@ export function TeamsScreen() {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const loadTeams = useCallback(async () => {
+  const loadTeams = useCallback(() => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const res = await fetch('/api/teams');
-      const data = await res.json();
-      if (!res.ok) {
-        setLoadError(data.error || 'Failed to load teams.');
-        return;
-      }
-      setTeams(data);
+      const { teams: teamsData } = loadWorldCupMeta();
+      setTeams(teamsData);
     } catch (e) {
       console.error(e);
-      setLoadError('Network error. Could not load teams.');
+      setLoadError('Could not load teams.');
     } finally {
       setIsLoading(false);
     }
@@ -136,7 +132,6 @@ export function TeamsScreen() {
       <div className="px-4 mb-4 shrink-0 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Participating Teams</h1>
-          <p className="text-gray-500 text-sm mt-1">দল ও খেলোয়াড়দের বিস্তারিত প্রোফাইল</p>
         </div>
         <button
           onClick={loadTeams}

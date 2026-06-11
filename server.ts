@@ -30,7 +30,7 @@ dotenv.config();
 logGeminiStartupStatus();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Firebase Auth allows "localhost" by default, not "127.0.0.1".
 if (process.env.NODE_ENV !== "production") {
@@ -272,7 +272,7 @@ app.post("/api/match/score-predictions", async (req, res) => {
 
 app.post("/api/gemini/match-result", async (req, res) => {
   const adminAuth = await verifyAdminRequest(req.headers.authorization);
-  if (!adminAuth.ok) {
+  if (adminAuth.ok === false) {
     return res.status(adminAuth.status).json({ error: adminAuth.error });
   }
 

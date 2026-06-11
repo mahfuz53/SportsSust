@@ -1,5 +1,9 @@
 import { auth } from '../firebase';
 import type { MatchPrediction, PredictionChoice } from './predictionTypes';
+import {
+  fetchMyPredictionFromFirestore,
+  submitPredictionToFirestore,
+} from './predictionsFirestore';
 
 async function authHeaders(): Promise<HeadersInit> {
   const idToken = await auth.currentUser?.getIdToken();
@@ -12,12 +16,33 @@ async function authHeaders(): Promise<HeadersInit> {
   };
 }
 
+async function parseJsonResponse<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  if (!text) return {} as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(
+      res.ok
+        ? 'Invalid response from server.'
+        : `Server error (${res.status}). Ensure the Node API is running or use Firestore rules.`
+    );
+  }
+}
+
+/** Prefer Firestore (works on static hosting); fall back to API when available. */
 export async function fetchMyPrediction(matchId: string): Promise<MatchPrediction | null> {
+  try {
+    return await fetchMyPredictionFromFirestore(matchId);
+  } catch (firestoreErr) {
+    console.warn('[Predictions] Firestore read failed, trying API:', firestoreErr);
+  }
+
   const headers = await authHeaders();
   const res = await fetch(`/api/predictions/me?matchId=${encodeURIComponent(matchId)}`, {
     headers,
   });
-  const data = await res.json();
+  const data = await parseJsonResponse<{ prediction?: MatchPrediction | null; error?: string }>(res);
   if (!res.ok) {
     throw new Error(data.error || 'Failed to load your prediction.');
   }
@@ -28,14 +53,23 @@ export async function submitPrediction(
   matchId: string,
   choice: PredictionChoice
 ): Promise<MatchPrediction> {
+  try {
+    return await submitPredictionToFirestore(matchId, choice);
+  } catch (firestoreErr) {
+    console.warn('[Predictions] Firestore write failed, trying API:', firestoreErr);
+  }
+
   const res = await fetch('/api/predictions/submit', {
     method: 'POST',
     headers: await authHeaders(),
     body: JSON.stringify({ matchId, choice }),
   });
-  const data = await res.json();
+  const data = await parseJsonResponse<{ prediction?: MatchPrediction; error?: string }>(res);
   if (!res.ok) {
     throw new Error(data.error || 'Failed to save prediction.');
   }
-  return data.prediction as MatchPrediction;
+  if (!data.prediction) {
+    throw new Error('Failed to save prediction.');
+  }
+  return data.prediction;
 }

@@ -8,8 +8,9 @@ service cloud.firestore {
 
     function isMatchAdmin() {
       return request.auth != null
-        && request.auth.token.email == 'mahfuz53@gmail.com'
-        && request.auth.token.email_verified == true;
+        && request.auth.token.email_verified == true
+        && (request.auth.token.email == 'mahfuz53@gmail.com'
+            || request.auth.token.email == 'ceo@autoconengineering.com');
     }
 
     match /worldcup_matches/{matchId} {
@@ -48,7 +49,28 @@ service cloud.firestore {
 
     match /leaderboard/{userId} {
       allow read: if true;
-      allow write: if false;
+
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.userId == userId
+        && request.resource.data.score == 0
+        && request.resource.data.matchesPredicted == 1;
+
+      allow update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.userId == userId
+        && request.resource.data.score == resource.data.score
+        && (
+          (request.resource.data.matchesPredicted == resource.data.matchesPredicted + 1
+           && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['displayName', 'email', 'photoURL', 'matchesPredicted', 'updatedAt']))
+          ||
+          (request.resource.data.matchesPredicted == resource.data.matchesPredicted
+           && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['displayName', 'email', 'photoURL', 'updatedAt']))
+        );
+
+      allow delete: if false;
     }
   }
 }

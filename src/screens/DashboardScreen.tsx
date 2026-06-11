@@ -90,12 +90,13 @@ export function DashboardScreen({
         <div className="space-y-4">
           {todaysMatches.length > 0 ? (
             todaysMatches.map((match) => (
-              <QuickPredictCard
-                key={match.id}
-                match={match}
-                teams={teams}
-                onOpenMatch={(matchId) => onNavigate('matches', matchId)}
-              />
+              <div key={match.id}>
+                <QuickPredictCard
+                  match={match}
+                  teams={teams}
+                  onOpenMatch={(matchId) => onNavigate('matches', matchId)}
+                />
+              </div>
             ))
           ) : (
             <div className="bg-gray-50 rounded-2xl p-6 text-center text-gray-500 text-sm border border-gray-100">

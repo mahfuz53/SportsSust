@@ -8,6 +8,7 @@ import {
   resolveWinnerFromScores,
   type WorldcupFirestoreMatch,
 } from "./src/lib/worldcupMatchTransform";
+import { buildGroupsFromJson, buildTeamsFromJson } from "./src/lib/worldCupMeta";
 import type { GroupInfo, GroupStanding, MatchData, TeamInfo } from "./src/types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -58,35 +59,6 @@ function resolveTeamId(name: string, lookup: Map<string, JsonTeam>): string {
   return team?.fifa_code ?? name.replace(/\s+/g, "-").toUpperCase();
 }
 
-function buildTeams(teamsJson: JsonTeam[]): TeamInfo[] {
-  return teamsJson.map((team, index) => ({
-    id: team.fifa_code,
-    name: team.name,
-    flag: team.flag_icon ?? "🏳️",
-    rank: index + 1,
-    group: team.group,
-    confederation: team.confed,
-    continent: team.continent,
-    introBench: `${team.name} represent ${team.continent ?? "their region"} in Group ${team.group} at the FIFA World Cup 2026.`,
-    introBn: `${team.name} ফিফা বিশ্বকাপ ২০২৬-এ গ্রুপ ${team.group}-এ প্রতিদ্বন্দ্বিতা করছে।`,
-    history: `Confederation: ${team.confed ?? "N/A"}. FIFA code: ${team.fifa_code}.`,
-    historyBn: `কনফেডারেশন: ${team.confed ?? "N/A"}।`,
-    qualification: `Qualified for FIFA World Cup 2026 — Group ${team.group}.`,
-    players: [],
-  }));
-}
-
-function buildGroups(groupsJson: JsonGroup[], teams: TeamInfo[]): GroupInfo[] {
-  const teamByName = new Map(teams.map((t) => [t.name.toLowerCase(), t]));
-
-  return groupsJson.map((group) => ({
-    name: group.name.replace("Group ", ""),
-    teams: group.teams
-      .map((name) => teamByName.get(name.toLowerCase()))
-      .filter((team): team is TeamInfo => Boolean(team)),
-  }));
-}
-
 function buildMatchesFromFixtures(
   fixtures: WorldcupFirestoreMatch[],
   teamLookup: Map<string, JsonTeam>
@@ -102,8 +74,8 @@ async function loadWorldCupData() {
   const groupsJson = readJson<{ groups: JsonGroup[] }>("worldcup.groups.json");
 
   const teamLookup = buildTeamLookup(teamsJson);
-  const teams = buildTeams(teamsJson);
-  const groups = buildGroups(groupsJson.groups, teams);
+  const teams = buildTeamsFromJson(teamsJson);
+  const groups = buildGroupsFromJson(groupsJson.groups, teams);
 
   const fixtures = await fetchAllWorldcupMatches();
   const matches = buildMatchesFromFixtures(fixtures, teamLookup);

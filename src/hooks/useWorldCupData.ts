@@ -7,6 +7,7 @@ import {
   WORLDCUP_MATCHES_COLLECTION,
   type WorldcupFirestoreMatch,
 } from '../lib/worldcupMatchTransform';
+import { loadWorldCupMeta } from '../lib/worldCupMeta';
 import type { GroupInfo, GroupStanding, MatchData, TeamInfo } from '../types';
 
 function buildTeamIdResolver(teams: TeamInfo[]): (name: string) => string {
@@ -29,45 +30,16 @@ export function useWorldCupData() {
   const [metaReady, setMetaReady] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadMeta() {
-      try {
-        const [teamsRes, groupsRes] = await Promise.all([
-          fetch('/api/teams'),
-          fetch('/api/groups'),
-        ]);
-
-        const [teamsData, groupsData] = await Promise.all([
-          teamsRes.json(),
-          groupsRes.json(),
-        ]);
-
-        if (cancelled) return;
-
-        if (!teamsRes.ok) {
-          throw new Error(teamsData.error || 'Failed to load teams.');
-        }
-        if (!groupsRes.ok) {
-          throw new Error(groupsData.error || 'Failed to load groups.');
-        }
-
-        setTeams(teamsData);
-        setGroups(groupsData);
-        setMetaReady(true);
-      } catch (err) {
-        if (!cancelled) {
-          console.error(err);
-          setLoadError(err instanceof Error ? err.message : 'Failed to load team data.');
-          setIsLoading(false);
-        }
-      }
+    try {
+      const { teams: teamsData, groups: groupsData } = loadWorldCupMeta();
+      setTeams(teamsData);
+      setGroups(groupsData);
+      setMetaReady(true);
+    } catch (err) {
+      console.error(err);
+      setLoadError(err instanceof Error ? err.message : 'Failed to load team data.');
+      setIsLoading(false);
     }
-
-    loadMeta();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   useEffect(() => {
