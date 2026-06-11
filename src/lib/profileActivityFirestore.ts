@@ -23,6 +23,7 @@ import type {
 } from './profileActivityApi';
 import { loadWorldCupMeta } from './worldCupMeta';
 import {
+  formatMatchWinnerLabel,
   WORLDCUP_MATCHES_COLLECTION,
   type WorldcupFirestoreMatch,
 } from './worldcupMatchTransform';
@@ -49,7 +50,7 @@ function formatMatchDate(date: string): string {
 
 function matchActualResult(match: WorldcupFirestoreMatch): string | null {
   if (match.team1Score === null || match.team2Score === null) return null;
-  if (match.winner) return match.winner;
+  if (match.winner) return formatMatchWinnerLabel(match.winner);
   if (match.team1Score === match.team2Score) return 'Draw';
   return match.team1Score > match.team2Score ? match.team1 : match.team2;
 }

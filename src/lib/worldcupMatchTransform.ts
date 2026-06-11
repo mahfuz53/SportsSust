@@ -2,6 +2,17 @@ import { computeMatchStatus } from '../../matchStatus';
 import type { MatchData } from '../types';
 
 export const WORLDCUP_MATCHES_COLLECTION = 'worldcup_matches';
+export const DRAW_WINNER_VALUE = 'draw';
+
+export function isDrawWinner(winner: string | null | undefined): boolean {
+  return winner != null && winner.toLowerCase() === DRAW_WINNER_VALUE;
+}
+
+export function formatMatchWinnerLabel(winner: string | null | undefined): string | null {
+  if (!winner) return null;
+  if (isDrawWinner(winner)) return 'Draw';
+  return winner;
+}
 
 export type WorldcupFirestoreMatch = {
   matchId: string;
@@ -44,7 +55,7 @@ export function resolveWinnerFromScores(
 ): string | null {
   if (scoreA > scoreB) return team1;
   if (scoreB > scoreA) return team2;
-  return null;
+  return DRAW_WINNER_VALUE;
 }
 
 export function fixtureToMatchData(

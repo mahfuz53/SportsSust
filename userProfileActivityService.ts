@@ -3,7 +3,10 @@ import path from "path";
 import { fetchAllWorldcupMatches, getAdminFirestore } from "./firestoreAdmin";
 import { getUserPredictionAdmin } from "./predictionScoringService";
 import { choiceLabel } from "./src/lib/predictionUtils";
-import type { WorldcupFirestoreMatch } from "./src/lib/worldcupMatchTransform";
+import {
+  formatMatchWinnerLabel,
+  type WorldcupFirestoreMatch,
+} from "./src/lib/worldcupMatchTransform";
 import {
   LEADERBOARD_COLLECTION,
   PREDICTIONS_SUBCOLLECTION,
@@ -76,7 +79,7 @@ function formatMatchDate(date: string): string {
 
 function matchActualResult(match: WorldcupFirestoreMatch): string | null {
   if (match.team1Score === null || match.team2Score === null) return null;
-  if (match.winner) return match.winner;
+  if (match.winner) return formatMatchWinnerLabel(match.winner);
   if (match.team1Score === match.team2Score) return "Draw";
   return match.team1Score > match.team2Score ? match.team1 : match.team2;
 }

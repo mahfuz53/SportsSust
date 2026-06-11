@@ -6,6 +6,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useMatchDocument } from '../hooks/useMatchDocument';
 import { useUserPrediction } from '../hooks/useUserPrediction';
 import { updateMatchResultInFirestore } from '../lib/matchResultFirestore';
+import { DRAW_WINNER_VALUE, isDrawWinner } from '../lib/worldcupMatchTransform';
 import { submitPrediction } from '../lib/predictionsApi';
 import { choiceLabel, canSubmitPrediction } from '../lib/predictionUtils';
 import type { PredictionChoice } from '../lib/predictionTypes';
@@ -594,7 +595,7 @@ function MatchDetails({
     } else if (liveMatch.winner === team2Name) {
       setAdminWinner('team2');
     } else if (
-      liveMatch.winner === 'Draw' ||
+      isDrawWinner(liveMatch.winner) ||
       (liveMatch.scoreA !== null &&
         liveMatch.scoreB !== null &&
         liveMatch.scoreA === liveMatch.scoreB)
@@ -631,7 +632,11 @@ function MatchDetails({
     }
 
     const winner =
-      adminWinner === 'team1' ? team1Name : adminWinner === 'team2' ? team2Name : null;
+      adminWinner === 'team1'
+        ? team1Name
+        : adminWinner === 'team2'
+          ? team2Name
+          : DRAW_WINNER_VALUE;
 
     if (adminWinner === 'team1' && score1 <= score2) {
       setAdminSaveError(`${team1Name} cannot win with a lower or equal score.`);
