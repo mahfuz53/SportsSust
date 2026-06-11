@@ -80,7 +80,5 @@ export function fixtureToMatchData(
     scoreB,
     winner,
     venue: fixture.ground,
-    preMatchAnalysis: null,
-    postMatchAnalysis: null,
   };
 }

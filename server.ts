@@ -2,16 +2,12 @@ import dotenv from "dotenv";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { generateMatchAnalysis, fetchLiveUpdates, fetchMatchResult, logGeminiStartupStatus } from "./geminiService";
 import { applyMatchStatus } from "./matchStatus";
-import { verifyAdminRequest } from "./adminAuth";
 import { getBearerToken, verifyIdToken } from "./firebaseAuthService";
 import {
   getWorldCupData,
-  getTeamName,
   initWorldCupData,
   refreshWorldCupData,
-  updateMatchResult,
 } from "./worldCupService";
 import {
   getUserPredictionAdmin,
@@ -26,8 +22,6 @@ import type { PredictionChoice } from "./src/lib/predictionTypes";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
-
-logGeminiStartupStatus();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -51,19 +45,11 @@ const users = [
   { id: "AUTOCON-1003", name: "Rakib Hasan", score: 85, matchesPredicted: 10, avatar: "https://i.pravatar.cc/150?u=rakib" },
 ];
 
-const analysisCache = new Map<string, { preMatchAnalysis?: string | null; postMatchAnalysis?: string | null }>();
 let predictions: { userId: string; matchId: string; choice: string; processed: boolean }[] = [];
 
-function loadMatchesWithAnalysis(): MatchData[] {
+function loadMatches(): MatchData[] {
   const { matches } = getWorldCupData();
-  return matches.map((match) => {
-    const cached = analysisCache.get(match.id);
-    return applyMatchStatus({
-      ...match,
-      preMatchAnalysis: cached?.preMatchAnalysis ?? match.preMatchAnalysis,
-      postMatchAnalysis: cached?.postMatchAnalysis ?? match.postMatchAnalysis,
-    });
-  });
+  return matches.map((match) => applyMatchStatus(match));
 }
 
 app.get("/api/user/profile", async (req, res) => {
@@ -114,7 +100,7 @@ app.get("/api/leaderboard", (_req, res) => {
 
 app.get("/api/matches", (_req, res) => {
   try {
-    res.json(loadMatchesWithAnalysis());
+    res.json(loadMatches());
   } catch (err) {
     console.error("[WorldCup] /api/matches error:", err);
     res.status(503).json({ error: "Failed to load matches." });
@@ -227,7 +213,7 @@ app.post("/api/predictions/submit", async (req, res) => {
     return res.status(400).json({ error: "Invalid prediction choice." });
   }
 
-  const matches = loadMatchesWithAnalysis();
+  const matches = loadMatches();
   const match = matches.find((m) => m.id === matchId);
   if (!match) {
     return res.status(404).json({ error: "Match not found." });
@@ -268,80 +254,6 @@ app.post("/api/match/score-predictions", async (req, res) => {
     console.error("[Predictions] score error:", err);
     res.status(500).json({ error: "Failed to score predictions." });
   }
-});
-
-app.post("/api/gemini/match-result", async (req, res) => {
-  const adminAuth = await verifyAdminRequest(req.headers.authorization);
-  if (adminAuth.ok === false) {
-    return res.status(adminAuth.status).json({ error: adminAuth.error });
-  }
-
-  const { matchId } = req.body;
-  const { teams } = getWorldCupData();
-  const matches = loadMatchesWithAnalysis();
-  const match = matches.find((m) => m.id === matchId);
-  if (!match) return res.status(404).json({ error: "Match not found" });
-
-  const teamAName = getTeamName(teams, match.teamA, match.teamAName);
-  const teamBName = getTeamName(teams, match.teamB, match.teamBName);
-  const date = match.time.split("T")[0];
-
-  const result = await fetchMatchResult(teamAName, teamBName, date, match.round ?? match.group);
-
-  if (result.source !== "gemini" || result.error) {
-    return res.status(502).json({
-      error: result.error ?? "Could not fetch match result from Gemini.",
-      source: result.source,
-    });
-  }
-
-  const updated = await updateMatchResult(matchId, result.scoreA, result.scoreB, "gemini");
-  const { standings } = getWorldCupData();
-
-  res.json({
-    match: updated,
-    standings,
-    source: "gemini",
-    scoreA: result.scoreA,
-    scoreB: result.scoreB,
-  });
-});
-
-app.post("/api/gemini/analysis", async (req, res) => {
-  const { matchId, type } = req.body;
-  const { teams } = getWorldCupData();
-  const matches = loadMatchesWithAnalysis();
-  const match = matches.find((m) => m.id === matchId);
-  if (!match) return res.status(404).json({ error: "Match not found" });
-
-  const teamAName = getTeamName(teams, match.teamA, match.teamAName);
-  const teamBName = getTeamName(teams, match.teamB, match.teamBName);
-
-  const prompt = type === "pre"
-    ? `Provide a short, tactical pre-match analysis (formation, history) for a football match between ${teamAName} and ${teamBName}. Write in English but with a storytelling approach. Max 100 words.`
-    : `Provide a detailed post-match analysis for ${teamAName} vs ${teamBName}. Score was ${match.scoreA}-${match.scoreB}. Mention possession, fouls, and story. Write in English. Max 150 words.`;
-
-  const mockFallback = `[Demo] ${type === "pre" ? "Pre-match" : "Post-match"} analysis for ${teamAName} vs ${teamBName} is unavailable. Please check your API key or try again later.`;
-
-  const result = await generateMatchAnalysis(prompt, mockFallback);
-
-  const cached = analysisCache.get(matchId) ?? {};
-  if (type === "pre") {
-    cached.preMatchAnalysis = result.analysis;
-  } else {
-    cached.postMatchAnalysis = result.analysis;
-  }
-  analysisCache.set(matchId, cached);
-
-  res.json(result);
-});
-
-app.post("/api/gemini/live-updates", async (_req, res) => {
-  const mockFallback =
-    "Demo update: No live data available. Configure a valid Gemini API key to fetch real-time World Cup news and results.";
-
-  const result = await fetchLiveUpdates(mockFallback);
-  res.json(result);
 });
 
 async function setupVite() {

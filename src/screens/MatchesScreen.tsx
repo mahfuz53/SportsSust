@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GroupInfo, GroupStanding, MatchData, TeamInfo } from '../types';
 import { format } from 'date-fns';
-import { Bot, ChevronLeft, MapPin, RefreshCw, Globe, Share2, Search, Star, AlertCircle, Shield, Save } from 'lucide-react';
-import { auth } from '../firebase';
+import { ChevronLeft, MapPin, RefreshCw, Share2, Search, Star, AlertCircle, Shield, Save } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { useMatchDocument } from '../hooks/useMatchDocument';
 import { useUserPrediction } from '../hooks/useUserPrediction';
@@ -243,10 +242,6 @@ export function MatchesScreen({
     if (updated) setSelectedMatch(updated);
   }, [matches, selectedMatch?.id]);
 
-  const handleMatchUpdate = (updated: MatchData) => {
-    setSelectedMatch(updated);
-  };
-
   if (selectedMatch) {
     return (
       <MatchDetails
@@ -254,7 +249,6 @@ export function MatchesScreen({
         teams={teams}
         favoriteTeams={favoriteTeams}
         onToggleFavoriteTeam={toggleFavoriteTeam}
-        onMatchUpdate={handleMatchUpdate}
         onBack={() => setSelectedMatch(null)}
       />
     );
@@ -540,7 +534,6 @@ function MatchDetails({
   teams,
   favoriteTeams,
   onToggleFavoriteTeam,
-  onMatchUpdate,
   onBack,
   onNavigateToProfile,
 }: {
@@ -548,7 +541,6 @@ function MatchDetails({
   teams: TeamInfo[];
   favoriteTeams: string[];
   onToggleFavoriteTeam: (e: React.MouseEvent, teamId: string) => void;
-  onMatchUpdate: (match: MatchData) => void;
   onBack: () => void;
   onNavigateToProfile?: () => void;
 }) {
@@ -583,9 +575,6 @@ function MatchDetails({
   const [predictionSaving, setPredictionSaving] = useState(false);
   const [predictionError, setPredictionError] = useState<string | null>(null);
   const [predictionSuccess, setPredictionSuccess] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [resultLoading, setResultLoading] = useState(false);
-  const [resultError, setResultError] = useState<string | null>(null);
   const [adminScore1, setAdminScore1] = useState('');
   const [adminScore2, setAdminScore2] = useState('');
   const [adminSaving, setAdminSaving] = useState(false);
@@ -596,9 +585,6 @@ function MatchDetails({
     setAdminScore1(liveMatch.scoreA !== null ? String(liveMatch.scoreA) : '');
     setAdminScore2(liveMatch.scoreB !== null ? String(liveMatch.scoreB) : '');
   }, [liveMatch.scoreA, liveMatch.scoreB, liveMatch.id]);
-  const [aiContent, setAiContent] = useState<string | null>(null);
-  const [aiSource, setAiSource] = useState<'gemini' | 'mock' | null>(null);
-  const [aiError, setAiError] = useState<string | null>(null);
 
   const saveAdminResult = async () => {
     const score1 = Number(adminScore1);
@@ -627,73 +613,6 @@ function MatchDetails({
       );
     } finally {
       setAdminSaving(false);
-    }
-  };
-
-  const fetchMatchResult = async () => {
-    if (!isAdmin) return;
-
-    setResultLoading(true);
-    setResultError(null);
-    try {
-      const idToken = await auth.currentUser?.getIdToken();
-      if (!idToken) {
-        setResultError('Sign in with the admin Google account to fetch results.');
-        return;
-      }
-
-      const res = await fetch('/api/gemini/match-result', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({ matchId: liveMatch.id }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setResultError(data.error || 'Failed to fetch match result.');
-        return;
-      }
-      if (data.match) {
-        onMatchUpdate(data.match);
-      }
-    } catch (e) {
-      console.error(e);
-      setResultError('Network error while fetching match result.');
-    } finally {
-      setResultLoading(false);
-    }
-  };
-
-  const fetchAiAnalysis = async (type: 'pre' | 'post') => {
-    setAiLoading(true);
-    setAiError(null);
-    try {
-      const res = await fetch('/api/gemini/analysis', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matchId: liveMatch.id, type })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setAiError(data.error || 'Failed to generate analysis.');
-        setAiContent(null);
-        setAiSource(null);
-        return;
-      }
-      setAiContent(data.analysis);
-      setAiSource(data.source ?? null);
-      if (data.source === 'mock' && data.error) {
-        setAiError(`Using demo content: ${data.error}`);
-      }
-    } catch (e) {
-      console.error(e);
-      setAiError('Network error. Could not reach the analysis service.');
-      setAiContent(null);
-      setAiSource(null);
-    } finally {
-      setAiLoading(false);
     }
   };
 
@@ -737,7 +656,7 @@ function MatchDetails({
   const handleShareMatch = async () => {
     let text = `Check out the match: ${teamA?.name} vs ${teamB?.name} at the Sports SUST Prediction Challenge 26!`;
     if (liveMatch.status === 'completed') {
-        text = `Match Finished: ${teamA?.name} ${liveMatch.scoreA} - ${liveMatch.scoreB} ${teamB?.name}. Check the AI Analysis on Sports SUST Prediction Challenge 26!`;
+        text = `Match Finished: ${teamA?.name} ${liveMatch.scoreA} - ${liveMatch.scoreB} ${teamB?.name}. See the results on Sports SUST Prediction Challenge 26!`;
     } else if (activeChoice) {
         const choiceName = choiceLabel(activeChoice, teamA.name, teamB.name);
         text = `I predicted ${choiceName} for the ${teamA?.name} vs ${teamB?.name} match! Join me in the Prediction Challenge 26!`;
@@ -855,21 +774,6 @@ function MatchDetails({
                   {adminSaveError}
                 </p>
               )}
-              {liveMatch.status !== 'completed' && (
-                <button
-                  type="button"
-                  onClick={fetchMatchResult}
-                  disabled={resultLoading}
-                  className="mt-3 w-full bg-emerald-50 text-emerald-700 font-semibold py-2.5 rounded-xl hover:bg-emerald-100 text-sm"
-                >
-                  {resultLoading ? 'Fetching result from Gemini...' : 'Fetch Result via Gemini'}
-                </button>
-              )}
-              {resultError && (
-                <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-                  {resultError}
-                </p>
-              )}
             </div>
           )}
         </div>
@@ -957,51 +861,6 @@ function MatchDetails({
           />
         )}
 
-        {/* AI Analysis Tab */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mt-6">
-          <div className="flex items-center gap-2 mb-4 text-indigo-700">
-             <Bot className="w-5 h-5" />
-             <h3 className="font-bold text-lg">AI Match Analysis</h3>
-          </div>
-          <p className="text-xs text-gray-500 mb-4">Gemini-powered insights. (গভীরে ম্যাচ বিশ্লেষণ গল্পাকারে)</p>
-
-          {aiError && (
-            <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-              {aiError}
-            </div>
-          )}
-
-          {aiContent ? (
-            <div className="space-y-2">
-              {aiSource && (
-                <span className={`inline-block text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${
-                  aiSource === 'gemini' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-                }`}>
-                  {aiSource === 'gemini' ? 'Powered by Gemini' : 'Demo fallback'}
-                </span>
-              )}
-              <div className="prose prose-sm prose-indigo leading-relaxed prose-p:my-2 bg-indigo-50/50 p-4 rounded-xl text-gray-700">
-                {aiContent}
-              </div>
-              <button
-                onClick={() => fetchAiAnalysis(liveMatch.status === 'upcoming' ? 'pre' : 'post')}
-                disabled={aiLoading}
-                className="text-xs text-indigo-600 font-medium hover:underline"
-              >
-                {aiLoading ? 'Regenerating...' : 'Regenerate analysis'}
-              </button>
-            </div>
-          ) : (
-            <button 
-              onClick={() => fetchAiAnalysis(liveMatch.status === 'upcoming' ? 'pre' : 'post')}
-              disabled={aiLoading}
-              className="w-full bg-indigo-50 text-indigo-700 font-semibold py-3 rounded-xl hover:bg-indigo-100 flex justify-center items-center"
-            >
-              {aiLoading ? 'Generating...' : `Generate ${liveMatch.status === 'upcoming' ? 'Pre' : 'Post'}-Match Analysis`}
-            </button>
-          )}
-        </div>
-        
       </div>
     </div>
   )
@@ -1104,40 +963,6 @@ function GroupPointTable({
   standings: GroupStanding[];
   isLoading: boolean;
 }) {
-  const [liveUpdate, setLiveUpdate] = useState<string | null>(null);
-  const [urls, setUrls] = useState<string[]>([]);
-  const [isFetching, setIsFetching] = useState(false);
-  const [liveSource, setLiveSource] = useState<'gemini' | 'mock' | null>(null);
-  const [liveError, setLiveError] = useState<string | null>(null);
-
-  const fetchLiveUpdates = async () => {
-    setIsFetching(true);
-    setLiveError(null);
-    try {
-      const res = await fetch('/api/gemini/live-updates', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) {
-        setLiveError(data.error || 'Failed to fetch live updates.');
-        return;
-      }
-      setLiveUpdate(data.update ?? null);
-      setUrls(data.urls || []);
-      setLiveSource(data.source ?? null);
-      if (data.source === 'mock' && data.error) {
-        setLiveError(`Using demo content: ${data.error}`);
-      }
-    } catch (e) {
-      console.error(e);
-      setLiveError('Network error. Could not reach the live updates service.');
-    } finally {
-      setIsFetching(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchLiveUpdates();
-  }, []);
-
   const groupedStandings = standings.reduce<Record<string, GroupStanding[]>>((acc, row) => {
     const key = row.group || 'Overall';
     if (!acc[key]) acc[key] = [];
@@ -1147,55 +972,6 @@ function GroupPointTable({
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-6">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2 text-indigo-700">
-             <Globe className="w-5 h-5" />
-             <h3 className="font-bold text-sm">Real-Time Search Updates</h3>
-          </div>
-          <button 
-            onClick={fetchLiveUpdates} 
-            disabled={isFetching}
-            className="p-2 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-100 active:scale-95 transition-all"
-          >
-             <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
-        
-        {liveError && (
-          <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-            {liveError}
-          </div>
-        )}
-
-        {isFetching && !liveUpdate ? (
-           <div className="text-sm text-gray-500 animate-pulse text-center py-4">Searching Google for latest updates...</div>
-        ) : (
-           <div className="bg-indigo-50/50 p-3 rounded-xl border border-indigo-50">
-             {liveSource && (
-               <span className={`inline-block mb-2 text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full ${
-                 liveSource === 'gemini' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-               }`}>
-                 {liveSource === 'gemini' ? 'Powered by Gemini' : 'Demo fallback'}
-               </span>
-             )}
-             <div className="prose prose-sm prose-indigo leading-relaxed prose-p:my-1 text-gray-700 text-xs sm:text-sm">
-                {liveUpdate || 'No live update available at this time.'}
-             </div>
-             {urls.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-indigo-100/50 flex flex-wrap gap-2">
-                  <span className="text-[10px] uppercase font-bold text-gray-400">Sources:</span>
-                  {urls.map((url, i) => (
-                    <a key={i} href={url} target="_blank" rel="noreferrer" className="text-[10px] bg-white border border-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full truncate max-w-[120px]">
-                      {new URL(url).hostname.replace('www.', '')}
-                    </a>
-                  ))}
-                </div>
-             )}
-           </div>
-        )}
-      </div>
-
       {isLoading && standings.length === 0 ? (
         <div className="text-center py-8 text-gray-500 text-sm animate-pulse">Loading standings...</div>
       ) : standings.length === 0 ? (

@@ -121,8 +121,7 @@ export function getTeamName(teams: TeamInfo[], teamId: string, fallback?: string
 export async function updateMatchResult(
   matchId: string,
   scoreA: number,
-  scoreB: number,
-  _source = "gemini"
+  scoreB: number
 ): Promise<MatchData | null> {
   if (!dataCache) await initWorldCupData();
 

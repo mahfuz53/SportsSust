@@ -49,8 +49,6 @@ export type MatchData = {
   scoreB: number | null;
   winner?: string | null;
   venue?: string;
-  preMatchAnalysis: string | null;
-  postMatchAnalysis: string | null;
 };
 
 export type GroupStanding = {
