@@ -1,7 +1,7 @@
 import type { MatchData } from "./src/types";
 
-/** Standard match duration in minutes (kickoff + 100 min = full time). */
-export const MATCH_DURATION_MINUTES = 100;
+/** Standard match duration in minutes (kickoff + 130 min = full time). */
+export const MATCH_DURATION_MINUTES = 130;
 export const MATCH_DURATION_MS = MATCH_DURATION_MINUTES * 60 * 1000;
 
 export function getMatchKickoffMs(match: { time: string }): number {

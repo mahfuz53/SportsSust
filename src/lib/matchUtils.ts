@@ -115,19 +115,20 @@ export function getTodayFocusMatch(matches: MatchData[], now = Date.now()): Matc
 
 export type MatchStatusInfo = {
   label: string;
-  score: string;
+  score?: string;
   tone: 'live' | 'completed';
 };
 
 export function getMatchStatusInfo(match: MatchData, now = Date.now()): MatchStatusInfo | null {
   const status = computeMatchStatus(match, now);
-  const score = `${match.scoreA ?? 0} - ${match.scoreB ?? 0}`;
 
   if (status === 'upcoming') {
     return null;
   }
   if (status === 'live') {
-    return { label: 'Live', score, tone: 'live' };
+    return { label: 'Live', tone: 'live' };
   }
+
+  const score = `${match.scoreA ?? 0} - ${match.scoreB ?? 0}`;
   return { label: 'Full Time', score, tone: 'completed' };
 }
