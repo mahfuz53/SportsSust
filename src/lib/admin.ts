@@ -1,4 +1,8 @@
-export const ADMIN_EMAILS = ['mahfuz53@gmail.com', 'ceo@autoconengineering.com'] as const;
+export const ADMIN_EMAILS = [
+  'mahfuz53@gmail.com',
+  'ceo@autoconengineering.com',
+  'sakibtalha1208@gmail.com',
+] as const;
 
 /** @deprecated Use ADMIN_EMAILS */
 export const ADMIN_EMAIL = ADMIN_EMAILS[0];
