@@ -90,6 +90,7 @@ export function fixtureToMatchData(
     scoreA,
     scoreB,
     winner,
+    storedWinner: fixture.winner ?? null,
     venue: fixture.ground,
   };
 }

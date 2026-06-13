@@ -48,6 +48,8 @@ export type MatchData = {
   scoreA: number | null;
   scoreB: number | null;
   winner?: string | null;
+  /** Raw `winner` value from Firestore (not derived from scores). */
+  storedWinner?: string | null;
   venue?: string;
 };
 

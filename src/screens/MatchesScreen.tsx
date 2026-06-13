@@ -8,7 +8,7 @@ import { useUserPrediction } from '../hooks/useUserPrediction';
 import { updateMatchResultInFirestore } from '../lib/matchResultFirestore';
 import { DRAW_WINNER_VALUE, isDrawWinner } from '../lib/worldcupMatchTransform';
 import { submitPrediction } from '../lib/predictionsApi';
-import { choiceLabel, canSubmitPrediction } from '../lib/predictionUtils';
+import { choiceLabel, canSubmitPrediction, isMatchWinnerFinalized } from '../lib/predictionUtils';
 import type { PredictionChoice } from '../lib/predictionTypes';
 import { MatchTeamsDisplay, TeamFlag } from '../components/MatchTeamsDisplay';
 import {
@@ -585,6 +585,7 @@ function MatchDetails({
 
   const team1Name = liveMatch.teamAName ?? teamA.name;
   const team2Name = liveMatch.teamBName ?? teamB.name;
+  const canSaveAdminResult = !isMatchWinnerFinalized(liveMatch.storedWinner);
 
   useEffect(() => {
     setAdminScore1(liveMatch.scoreA !== null ? String(liveMatch.scoreA) : '');
@@ -624,6 +625,11 @@ function MatchDetails({
   ]);
 
   const saveAdminResult = async () => {
+    if (!canSaveAdminResult) {
+      setAdminSaveError('This match result has already been saved and cannot be updated.');
+      return;
+    }
+
     const score1 = Number(adminScore1);
     const score2 = Number(adminScore2);
     if (!Number.isInteger(score1) || score1 < 0 || !Number.isInteger(score2) || score2 < 0) {
@@ -825,11 +831,15 @@ function MatchDetails({
               <button
                 type="button"
                 onClick={saveAdminResult}
-                disabled={adminSaving}
-                className="w-full bg-indigo-600 text-white font-semibold py-2.5 rounded-xl hover:bg-indigo-700 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                disabled={adminSaving || !canSaveAdminResult}
+                className="w-full bg-indigo-600 text-white font-semibold py-2.5 rounded-xl hover:bg-indigo-700 text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Save className="w-4 h-4" />
-                {adminSaving ? 'Saving to Firestore...' : 'Save Result'}
+                {adminSaving
+                  ? 'Saving to Firestore...'
+                  : canSaveAdminResult
+                    ? 'Save Result'
+                    : 'Result Already Saved'}
               </button>
               {adminSaveMessage && (
                 <p className="mt-2 text-xs text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2">

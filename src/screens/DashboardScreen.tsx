@@ -112,9 +112,9 @@ export function DashboardScreen({
             <Trophy className="w-5 h-5 text-yellow-500" />
             Main Leaderboard
           </h2>
-          <button className="text-indigo-600 text-sm font-medium flex items-center">
+          {/* <button className="text-indigo-600 text-sm font-medium flex items-center">
             সব দেখুন <ChevronRight className="w-4 h-4" />
-          </button>
+          </button> */}
         </div>
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden divide-y divide-gray-50">
           {leaderboardLoading && leaderboard.length === 0 && (
